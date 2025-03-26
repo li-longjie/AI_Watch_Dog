@@ -84,6 +84,10 @@ python video_server.py --video_source "./测试视频/xxx.mp4"
 # 或使用RTSP视频流
 python video_server.py --video_source "rtsp://xxx.xxx.xxx.xxx/xxx"
 ```
+#或使用摄像头
+```bash
+python video_server.py --video_source 0
+```
 
 ### 3. WebSocket推送服务访问
 
