@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>视频监控预警</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .alert {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+        }
+        .alert-time {
+            color: #666;
+            font-size: 0.9em;
+        }
+        .alert-content {
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>视频监控预警</h1>
+    <div id="alerts"></div>
+
+    <script>
+        const alertsDiv = document.getElementById('alerts');
+        const ws = new WebSocket(`ws://${window.location.hostname}:${window.location.port}/ws`);
+
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            if (data.type === 'alert') {
+                const alertDiv = document.createElement('div');
+                alertDiv.className = 'alert';
+                alertDiv.innerHTML = `
+                    <div class="alert-time">${data.timestamp}</div>
+                    <div class="alert-content">${data.content}</div>
+                `;
+                alertsDiv.insertBefore(alertDiv, alertsDiv.firstChild);
+            }
+        };
+
+        ws.onclose = function() {
+            console.log('WebSocket连接已关闭');
+            // 可以添加重连逻辑
+        };
+
+        // 获取历史预警
+        fetch('/alerts')
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    data.alerts.forEach(alert => {
+                        const alertDiv = document.createElement('div');
+                        alertDiv.className = 'alert';
+                        alertDiv.innerHTML = `
+                            <div class="alert-time">${alert.timestamp}</div>
+                            <div class="alert-content">${alert.content}</div>
+                        `;
+                        alertsDiv.appendChild(alertDiv);
+                    });
+                }
+            });
+    </script>
+</body>
+</html> 
