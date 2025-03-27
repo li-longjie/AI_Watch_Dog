@@ -24,7 +24,7 @@ import uvicorn
 from multiprocessing import set_start_method 
 from config import VideoConfig, ServerConfig, VIDEO_SOURCE, LOG_CONFIG, ARCHIVE_DIR, update_config
 import os
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from video_processor import VideoProcessor  # 重新导入VideoProcessor
 import queue
@@ -720,14 +720,8 @@ async def get_index():
     <div class="header">
         <h1>智能视频监控系统</h1>
         <div class="header-controls">
-            <button class="control-btn tooltip" data-tooltip="截图当前画面">
-                <i>📷</i> 截图
-            </button>
-            <button class="control-btn tooltip" data-tooltip="录制视频">
-                <i>⏺️</i> 录制
-            </button>
-            <button class="control-btn tooltip" data-tooltip="系统设置">
-                <i>⚙️</i> 设置
+            <button class="control-btn tooltip" id="behavior-analysis-btn" data-tooltip="分析视频中的行为">
+                <i>⏺️</i> 行为分析
             </button>
         </div>
     </div>
@@ -805,6 +799,12 @@ async def get_index():
         const alertCountElement = document.getElementById('alert-count');
         const askTextElement = document.getElementById('ask-text');
         const askLoaderElement = document.getElementById('ask-loader');
+        
+        // 添加行为分析按钮点击事件
+        document.getElementById('behavior-analysis-btn').addEventListener('click', function() {
+            // 直接跳转到行为分析页面
+            window.location.href = '/behavior_analysis';
+        });
         
         let alertCount = 0;
 
@@ -1119,6 +1119,50 @@ async def get_index():
 </html>
     """)
 
+# 添加新路由来启动行为分析程序
+@app.get("/launch_behavior_analysis")
+async def launch_behavior_analysis():
+    try:
+        # 更彻底地释放摄像头资源
+        if hasattr(video_processor, 'cap') and video_processor.cap is not None:
+            try:
+                logging.info("正在释放摄像头资源...")
+                video_processor.cap.release()
+                video_processor.cap = None
+                # 使用系统命令释放摄像头
+                import platform
+                if platform.system() == "Windows":
+                    os.system("taskkill /F /IM opencv_videoio*.exe 2>nul")
+                else:
+                    os.system("pkill -f 'python.*opencv' 2>/dev/null")
+            except Exception as e:
+                logging.warning(f"释放摄像头时出错: {e}")
+        
+        # 增加等待时间
+        await asyncio.sleep(5)
+        
+        # 使用子进程启动diagram.py
+        import subprocess
+        import sys
+        import os
+        
+        # 获取当前脚本的目录
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        diagram_path = os.path.join(current_dir, "diagram.py")
+        
+        # 确保传递必要的环境参数
+        env = os.environ.copy()
+        env['PYTHONPATH'] = f"{current_dir}:{env.get('PYTHONPATH', '')}"
+        
+        # 使用Python解释器启动diagram.py
+        subprocess.Popen([sys.executable, diagram_path], env=env)
+        
+        # 返回成功消息或重定向回主页
+        return {"status": "success", "message": "行为分析程序已启动"}
+    except Exception as e:
+        logging.error(f"启动行为分析程序时出错: {e}")
+        return {"status": "error", "message": str(e)}
+
 @app.get("/alerts")
 async def get_alerts():
     return {
@@ -1189,6 +1233,661 @@ async def alert_handler():
         except Exception as e:
             logging.error(f"Alert handler error: {e}")
             await asyncio.sleep(1)
+
+# 添加新路由来显示行为分析界面
+@app.get("/behavior_analysis")
+async def behavior_analysis_page():
+    return HTMLResponse("""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>行为监测与可视化系统</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary: #4fd1c5;
+            --primary-dark: #38b2ac;
+            --secondary: #805ad5;
+            --danger: #ff4d4d;
+            --warning: #ffcc00;
+            --dark-bg: #1a1a1a;
+            --panel-bg: #172a45;
+            --panel-border: #2d3748;
+            --text-primary: #e6f1ff;
+            --text-secondary: #8892b0;
+            --transition: all 0.25s cubic-bezier(0.645, 0.045, 0.355, 1);
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--dark-bg);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+        
+        .header {
+            background-color: var(--panel-bg);
+            padding: 1rem 2rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: relative;
+            z-index: 10;
+            border-bottom: 1px solid rgba(79, 209, 197, 0.2);
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            letter-spacing: 0.5px;
+        }
+        
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: auto auto;
+            gap: 1.5rem;
+            padding: 1.5rem;
+            height: calc(100vh - 72px);
+        }
+        
+        .panel {
+            background-color: var(--panel-bg);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid var(--panel-border);
+            transition: var(--transition);
+        }
+        
+        .panel-title {
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid rgba(79, 209, 197, 0.2);
+        }
+        
+        .camera-panel {
+            grid-row: 1;
+            grid-column: 1;
+        }
+        
+        .line-chart-panel {
+            grid-row: 1;
+            grid-column: 2;
+        }
+        
+        .pie-chart-panel {
+            grid-row: 2;
+            grid-column: 1;
+        }
+        
+        .stats-panel {
+            grid-row: 2;
+            grid-column: 2;
+        }
+        
+        .camera-container {
+            position: relative;
+            width: 100%;
+            height: calc(100% - 45px);
+            overflow: hidden;
+            border-radius: 8px;
+            background-color: #000;
+            box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+        
+        #camera-feed {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: var(--transition);
+        }
+        
+        .chart-container {
+            width: 100%;
+            height: calc(100% - 45px);
+            position: relative;
+        }
+        
+        .behavior-label {
+            position: absolute;
+            bottom: 1rem;
+            left: 1rem;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            color: var(--primary);
+            backdrop-filter: blur(5px);
+        }
+        
+        .control-btn {
+            background: rgba(79, 209, 197, 0.1);
+            border: 1px solid var(--primary);
+            color: var(--primary);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+        
+        .control-btn:hover {
+            background: rgba(79, 209, 197, 0.2);
+            transform: translateY(-2px);
+        }
+        
+        .status-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 2rem;
+            background-color: var(--panel-bg);
+            border-top: 1px solid rgba(79, 209, 197, 0.2);
+            font-size: 0.85rem;
+            z-index: 10;
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .status-indicator:before {
+            content: "";
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: var(--primary);
+            margin-right: 0;
+            animation: pulse-animation 2s infinite;
+        }
+        
+        .behavior-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+        }
+        
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+        }
+        
+        .back-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid white;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
+        }
+        
+        .back-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        @keyframes pulse-animation {
+            0% { box-shadow: 0 0 0 0 rgba(79, 209, 197, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(79, 209, 197, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(79, 209, 197, 0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>行为监测与可视化系统</h1>
+        <button class="back-btn" onclick="window.location.href='/'">返回监控系统</button>
+    </div>
+    
+    <div class="container">
+        <div class="panel camera-panel">
+            <div class="panel-title">实时监控</div>
+            <div class="camera-container">
+                <img id="camera-feed" src="/static/loading.gif" alt="实时监控画面">
+                <div class="behavior-label" id="current-behavior">当前行为: 等待分析...</div>
+            </div>
+            <button class="control-btn" id="refresh-btn">
+                <i>🔄</i> 刷新数据
+            </button>
+        </div>
+        
+        <div class="panel line-chart-panel">
+            <div class="panel-title">行为随时间变化</div>
+            <div class="chart-container">
+                <canvas id="line-chart"></canvas>
+            </div>
+        </div>
+        
+        <div class="panel pie-chart-panel">
+            <div class="panel-title">行为分布</div>
+            <div class="chart-container">
+                <canvas id="pie-chart"></canvas>
+            </div>
+            <div class="behavior-legend">
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #4CAF50;"></div>
+                    <span>专注工作</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #FFC107;"></div>
+                    <span>吃东西</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #2196F3;"></div>
+                    <span>喝水</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #9C27B0;"></div>
+                    <span>喝饮料</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #F44336;"></div>
+                    <span>玩手机</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #607D8B;"></div>
+                    <span>睡觉</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #795548;"></div>
+                    <span>其他</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="panel stats-panel">
+            <div class="panel-title">行为统计</div>
+            <div id="behavior-stats">
+                <p>专注工作: <span id="work-count">0</span> 次</p>
+                <p>吃东西: <span id="eat-count">0</span> 次</p>
+                <p>喝水: <span id="water-count">0</span> 次</p>
+                <p>喝饮料: <span id="drink-count">0</span> 次</p>
+                <p>玩手机: <span id="phone-count">0</span> 次</p>
+                <p>睡觉: <span id="sleep-count">0</span> 次</p>
+                <p>其他: <span id="other-count">0</span> 次</p>
+            </div>
+            <button class="control-btn" id="refresh-btn-stats">
+                <i>🔄</i> 刷新数据
+            </button>
+        </div>
+    </div>
+    
+    <div class="status-bar">
+        <div class="status-indicator" id="status-text">系统就绪</div>
+        <div id="current-time"></div>
+    </div>
+
+    <script>
+        // 增强的WebSocket处理代码
+        let videoWs;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        
+        function connectWebSocket() {
+            try {
+                console.log("正在连接视频WebSocket...");
+                videoWs = new WebSocket(`ws://${window.location.host}/video_feed`);
+                
+                videoWs.onopen = function() {
+                    console.log("WebSocket连接已建立");
+                    document.getElementById('status-text').textContent = "视频流已连接";
+                    reconnectAttempts = 0;
+                };
+                
+                videoWs.onmessage = function(event) {
+                    try {
+                        event.data.arrayBuffer().then(buffer => {
+                            try {
+                                const blob = new Blob([buffer], {type: 'image/jpeg'});
+                                document.getElementById('camera-feed').src = URL.createObjectURL(blob);
+                            } catch (err) {
+                                console.error("处理视频帧时出错:", err);
+                            }
+                        }).catch(err => {
+                            console.error("读取视频数据时出错:", err);
+                        });
+                    } catch (err) {
+                        console.error("WebSocket消息处理错误:", err);
+                    }
+                };
+                
+                videoWs.onclose = function(event) {
+                    console.log("WebSocket连接已关闭", event);
+                    if (reconnectAttempts < maxReconnectAttempts) {
+                        reconnectAttempts++;
+                        document.getElementById('status-text').textContent = `视频流断开，尝试重连 (${reconnectAttempts}/${maxReconnectAttempts})...`;
+                        setTimeout(connectWebSocket, 2000);
+                    } else {
+                        document.getElementById('status-text').textContent = "视频流连接失败，使用模拟数据";
+                        // 使用占位图像
+                        document.getElementById('camera-feed').src = "https://via.placeholder.com/640x480.png?text=Video+Stream+Unavailable";
+                    }
+                };
+                
+                videoWs.onerror = function(error) {
+                    console.error("WebSocket错误:", error);
+                    document.getElementById('status-text').textContent = "视频流连接出错";
+                };
+            } catch (err) {
+                console.error("创建WebSocket时出错:", err);
+                document.getElementById('status-text').textContent = "无法创建视频连接";
+                document.getElementById('camera-feed').src = "https://via.placeholder.com/640x480.png?text=Connection+Error";
+            }
+        }
+        
+        // 清理资源函数
+        function cleanupWebSocket() {
+            if (videoWs) {
+                try {
+                    videoWs.close();
+                } catch (err) {
+                    console.error("关闭WebSocket时出错:", err);
+                }
+            }
+        }
+        
+        // 清理图像URL资源
+        function cleanupImageURLs() {
+            const img = document.getElementById('camera-feed');
+            if (img && img.src && img.src.startsWith('blob:')) {
+                URL.revokeObjectURL(img.src);
+            }
+        }
+        
+        // 页面加载和卸载事件
+        window.addEventListener('load', function() {
+            console.log("页面加载 - 初始化视频和行为分析");
+            connectWebSocket();
+            simulateBehaviorDetection();
+        });
+        
+        window.addEventListener('beforeunload', function() {
+            console.log("页面卸载 - 清理资源");
+            cleanupWebSocket();
+            cleanupImageURLs();
+        });
+        
+        // 行为映射
+        const behaviorMap = {
+            "1": "专注工作",
+            "2": "吃东西",
+            "3": "喝水",
+            "4": "喝饮料",
+            "5": "玩手机",
+            "6": "睡觉",
+            "7": "其他"
+        };
+        
+        // 行为颜色
+        const behaviorColors = {
+            "1": "#4CAF50",  // 绿色表示工作
+            "2": "#FFC107",  // 琥珀色表示吃东西
+            "3": "#2196F3",  // 蓝色表示喝水
+            "4": "#9C27B0",  // 紫色表示喝饮料
+            "5": "#F44336",  // 红色表示玩手机
+            "6": "#607D8B",  // 蓝灰色表示睡觉
+            "7": "#795548"   // 棕色表示其他
+        };
+        
+        // 模拟数据
+        let behaviorHistory = [];
+        let behaviorCounts = {
+            "1": 0,
+            "2": 0,
+            "3": 0,
+            "4": 0,
+            "5": 0,
+            "6": 0,
+            "7": 0
+        };
+        
+        // 初始化图表
+        const lineCtx = document.getElementById('line-chart').getContext('2d');
+        const pieCtx = document.getElementById('pie-chart').getContext('2d');
+        
+        // 折线图
+        const lineChart = new Chart(lineCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: '行为类型',
+                    data: [],
+                    backgroundColor: 'rgba(79, 209, 197, 0.2)',
+                    borderColor: 'rgba(79, 209, 197, 1)',
+                    borderWidth: 2,
+                    pointBackgroundColor: function(context) {
+                        const index = context.dataIndex;
+                        const value = context.dataset.data[index];
+                        return behaviorColors[value] || 'rgba(79, 209, 197, 1)';
+                    },
+                    pointRadius: 5,
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        min: 0.5,
+                        max: 7.5,
+                        ticks: {
+                            callback: function(value) {
+                                return behaviorMap[value] || '';
+                            },
+                            color: 'white'
+                        },
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            color: 'white'
+                        },
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                }
+            }
+        });
+        
+        // 饼图
+        const pieChart = new Chart(pieCtx, {
+            type: 'pie',
+            data: {
+                labels: Object.values(behaviorMap),
+                datasets: [{
+                    data: Object.values(behaviorCounts),
+                    backgroundColor: Object.values(behaviorColors),
+                    borderColor: 'rgba(255, 255, 255, 0.2)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                }
+            }
+        });
+        
+        // 模拟行为检测
+        function simulateBehaviorDetection() {
+            setInterval(() => {
+                // 随机生成行为
+                const behaviorNum = String(Math.floor(Math.random() * 7) + 1);
+                const behaviorDesc = behaviorMap[behaviorNum];
+                const timestamp = new Date();
+                
+                // 添加到历史
+                behaviorHistory.push({
+                    timestamp: timestamp,
+                    behavior: behaviorNum
+                });
+                
+                // 限制历史长度
+                if (behaviorHistory.length > 20) {
+                    behaviorHistory.shift();
+                }
+                
+                // 更新计数
+                behaviorCounts[behaviorNum]++;
+                
+                // 更新UI
+                updateUI(behaviorNum, behaviorDesc);
+                
+                // 更新图表
+                updateCharts();
+                
+            }, 5000); // 每5秒检测一次
+        }
+        
+        // 更新UI
+        function updateUI(behaviorNum, behaviorDesc) {
+            // 更新当前行为标签
+            document.getElementById('current-behavior').textContent = `当前行为: ${behaviorDesc}`;
+            document.getElementById('current-behavior').style.color = behaviorColors[behaviorNum];
+            
+            // 更新统计
+            document.getElementById('work-count').textContent = behaviorCounts["1"];
+            document.getElementById('eat-count').textContent = behaviorCounts["2"];
+            document.getElementById('water-count').textContent = behaviorCounts["3"];
+            document.getElementById('drink-count').textContent = behaviorCounts["4"];
+            document.getElementById('phone-count').textContent = behaviorCounts["5"];
+            document.getElementById('sleep-count').textContent = behaviorCounts["6"];
+            document.getElementById('other-count').textContent = behaviorCounts["7"];
+            
+            // 更新状态
+            document.getElementById('status-text').textContent = `检测到行为: ${behaviorDesc}`;
+        }
+        
+        // 更新图表
+        function updateCharts() {
+            // 更新折线图
+            lineChart.data.labels = behaviorHistory.map(item => {
+                const time = item.timestamp;
+                return time.getHours() + ':' + 
+                       (time.getMinutes() < 10 ? '0' : '') + time.getMinutes() + ':' + 
+                       (time.getSeconds() < 10 ? '0' : '') + time.getSeconds();
+            });
+            lineChart.data.datasets[0].data = behaviorHistory.map(item => item.behavior);
+            lineChart.update();
+            
+            // 更新饼图
+            pieChart.data.datasets[0].data = Object.values(behaviorCounts);
+            pieChart.update();
+        }
+        
+        // 刷新按钮
+        document.getElementById('refresh-btn').addEventListener('click', function() {
+            // 触发一次行为检测
+            const behaviorNum = String(Math.floor(Math.random() * 7) + 1);
+            const behaviorDesc = behaviorMap[behaviorNum];
+            const timestamp = new Date();
+            
+            behaviorHistory.push({
+                timestamp: timestamp,
+                behavior: behaviorNum
+            });
+            
+            if (behaviorHistory.length > 20) {
+                behaviorHistory.shift();
+            }
+            
+            behaviorCounts[behaviorNum]++;
+            
+            updateUI(behaviorNum, behaviorDesc);
+            updateCharts();
+            
+            document.getElementById('status-text').textContent = '数据已刷新';
+        });
+        
+        document.getElementById('refresh-btn-stats').addEventListener('click', function() {
+            updateCharts();
+            document.getElementById('status-text').textContent = '统计数据已刷新';
+        });
+    </script>
+</body>
+</html>
+    """)
+
+# 添加一个路由来加载默认图像，以防loading.gif不存在
+@app.get("/static/loading.gif", include_in_schema=False)
+async def get_loading_gif():
+    from fastapi.responses import FileResponse
+    import os
+    
+    # 检查loading.gif是否存在
+    loading_path = os.path.join("static", "loading.gif")
+    if os.path.exists(loading_path):
+        return FileResponse(loading_path)
+    
+    # 如果不存在，返回默认图像
+    default_image = os.path.join("static", "default_loading.jpg")
+    if os.path.exists(default_image):
+        return FileResponse(default_image)
+    
+    # 如果都不存在，返回占位符文本
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse("Loading...")
 
 if __name__ == "__main__":
     print(f"启动视频服务器 http://{ServerConfig.HOST}:{ServerConfig.PORT}")
