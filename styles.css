@@ -1,0 +1,118 @@
+/* 底部状态栏样式 */
+.footer-status-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #0a192f;
+  color: #8892b0;
+  padding: 6px 15px;
+  font-size: 14px;
+  border-top: 1px solid #1d2d4a;
+  z-index: 1000;
+}
+
+.status-info {
+  display: flex;
+  align-items: center;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  margin-right: 15px;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background-color: #36f9ae;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+
+.system-info, .time-info {
+  margin-right: 15px;
+}
+
+/* 行为分析按钮样式 */
+.action-buttons {
+  display: flex;
+  align-items: center;
+}
+
+.analyze-button {
+  display: flex;
+  align-items: center;
+  background-color: #0e86ca;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+  margin-left: 15px;
+}
+
+.analyze-button:hover {
+  background-color: #0a6ca5;
+}
+
+.analyze-icon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+  background-image: url('path/to/analyze-icon.svg');
+  background-size: contain;
+  background-repeat: no-repeat;
+}
+
+/* 添加这些样式以匹配您的设计 */
+.status-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #0a192f;
+    color: #8892b0;
+    padding: 6px 15px;
+    font-size: 14px;
+    border-top: 1px solid #1d2d4a;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+}
+
+.system-stats {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+/* 添加专门针对行为分析按钮的简单样式 */
+.analyze-btn-container {
+    margin-left: 20px;
+}
+
+.behavior-btn {
+    background-color: #0e86ca;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 14px;
+    cursor: pointer;
+    height: 28px;
+    display: inline-block;
+}
+
+.behavior-btn:hover {
+    background-color: #0a6ca5;
+} 
