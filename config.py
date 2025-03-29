@@ -30,14 +30,14 @@ VIDEO_SOURCE = VideoConfig.CAMERA_INDEX  # 使用摄像头索引
 # API配置
 class APIConfig:
     # 通义千问API配置
-    QWEN_API_KEY = "你自己的API"
+    QWEN_API_KEY = "sk-3ae52f0281c7494dadb120669b86e634"
     QWEN_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-    QWEN_MODEL = "qwen-vl-plus-latest"
+    QWEN_MODEL = "qwen2.5-vl-3b-instruct"
     
 
 
     # SiliconFlow DeepSeek API 配置
-    DEEPSEEK_API_KEY = "硅基流动API"
+    DEEPSEEK_API_KEY = "sk-kpajghjhsydaddgtzfznuajjcvjifxsdecswjasignpgwsrt"
     DEEPSEEK_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
     DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V3"
     
