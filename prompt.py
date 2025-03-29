@@ -7,7 +7,7 @@ prompt_vieo = """
 # [历史上下文]
 # {Recursive_summary}
 #prompt_detect 用于deepseek检测视频内容时的提示词
-prompt_detect = """请分析以下视频监控描述，判断是否存在重要情况（如玩手机、吃东西等）或异常情况（如人员聚集、冲突等）。
+prompt_detect = """请分析以下视频监控描述，判断是否存在重要情况如：睡觉、玩手机、喝饮料、喝水、吃东西或者专注工作）或异常情况（如人员聚集、冲突等）。
 请以JSON格式返回分析结果，包含type（important/warning/normal）、reason（具体原因）和confidence（置信度）字段。
 
 监控时间：{time}

@@ -1,0 +1,124 @@
+/* 行为分析页面样式 */
+.analysis-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 20px;
+    background-color: rgba(10, 25, 47, 0.7);
+    border-radius: 8px;
+    margin: 20px 0;
+}
+
+.filter-section {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    padding: 15px;
+    background-color: rgba(29, 45, 74, 0.5);
+    border-radius: 6px;
+}
+
+.filter-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.filter-group label {
+    color: #8892b0;
+}
+
+.filter-group select {
+    background-color: #0a192f;
+    color: #e6f1ff;
+    border: 1px solid #1d2d4a;
+    border-radius: 4px;
+    padding: 6px 10px;
+}
+
+.primary-button {
+    background-color: #0e86ca;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 14px;
+    cursor: pointer;
+}
+
+.primary-button:hover {
+    background-color: #0a6ca5;
+}
+
+.results-section {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.statistics-card {
+    background-color: rgba(29, 45, 74, 0.5);
+    border-radius: 6px;
+    padding: 15px;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+    margin-top: 15px;
+}
+
+.stat-item {
+    text-align: center;
+}
+
+.stat-value {
+    font-size: 24px;
+    color: #64ffda;
+    font-weight: bold;
+}
+
+.stat-label {
+    color: #8892b0;
+    margin-top: 5px;
+}
+
+.data-visualization, .data-table {
+    background-color: rgba(29, 45, 74, 0.5);
+    border-radius: 6px;
+    padding: 15px;
+}
+
+.chart-container {
+    height: 300px;
+    margin-top: 15px;
+}
+
+.chart-placeholder {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    color: #8892b0;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+}
+
+table th, table td {
+    padding: 10px;
+    text-align: left;
+    border-bottom: 1px solid #1d2d4a;
+}
+
+table th {
+    color: #64ffda;
+    font-weight: normal;
+}
+
+table td {
+    color: #e6f1ff;
+} 

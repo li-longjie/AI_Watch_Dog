@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>行为分析 - 视频监控智能分析系统</title>
+    <link rel="stylesheet" href="/static/css/main.css" />
+    <link rel="stylesheet" href="/static/css/behavior-analysis.css" />
+  </head>
+  <body>
+    <div class="header">
+      <div class="logo">视频监控智能分析系统</div>
+      <div class="version">V2.7</div>
+      <div class="status-indicators">
+        <div class="indicator">
+          <span class="dot active"></span>
+          系统在线
+        </div>
+        <div class="indicator">
+          <span class="dot active"></span>
+          安全监控
+        </div>
+      </div>
+    </div>
+
+    <div class="main-content">
+      <h1>行为分析</h1>
+
+      <div class="analysis-container">
+        <div class="filter-section">
+          <div class="filter-group">
+            <label for="date-filter">日期范围:</label>
+            <select id="date-filter">
+              <option value="today">今天</option>
+              <option value="yesterday">昨天</option>
+              <option value="week">本周</option>
+              <option value="month">本月</option>
+              <option value="custom">自定义...</option>
+            </select>
+          </div>
+
+          <div class="filter-group">
+            <label for="behavior-type">行为类型:</label>
+            <select id="behavior-type">
+              <option value="all">全部</option>
+              <option value="1">行为1</option>
+              <option value="2">行为2</option>
+              <option value="7">行为7</option>
+            </select>
+          </div>
+
+          <button id="apply-filters" class="primary-button">应用筛选</button>
+        </div>
+
+        <div class="results-section">
+          <div class="statistics-card">
+            <h3>统计概览</h3>
+            <div class="stats-grid">
+              <div class="stat-item">
+                <div class="stat-value" id="total-behaviors">10</div>
+                <div class="stat-label">总行为数</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-value" id="unique-behaviors">3</div>
+                <div class="stat-label">不同行为类型</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-value" id="most-frequent">行为1</div>
+                <div class="stat-label">最频繁行为</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="data-visualization">
+            <h3>行为趋势图</h3>
+            <div class="chart-container" id="behavior-chart">
+              <!-- 图表将通过JavaScript渲染 -->
+              <div class="chart-placeholder">加载中...</div>
+            </div>
+          </div>
+
+          <div class="data-table">
+            <h3>行为记录</h3>
+            <table id="behavior-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>行为类型</th>
+                  <th>计数</th>
+                  <th>时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- 行为数据将通过JavaScript加载 -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="status-bar">
+        <div class="status-indicator">系统运行中</div>
+        <div class="system-stats">
+          <div class="stat-item">
+            <span>CPU:</span>
+            <span class="stat-value" id="cpu-usage">11%</span>
+          </div>
+          <div class="stat-item">
+            <span>内存:</span>
+            <span class="stat-value" id="mem-usage">17%</span>
+          </div>
+          <div class="stat-item">
+            <span>网络:</span>
+            <span class="stat-value" id="net-usage">0.9 Mbps</span>
+          </div>
+          <div id="server-time">2025/3/28 20:17:38</div>
+          <div class="analyze-btn-container">
+            <button id="behaviorAnalysisBtn" class="behavior-btn">
+              行为分析
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="/static/js/behavior-analysis.js"></script>
+  </body>
+</html>
