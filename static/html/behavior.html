@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>行为监测与可视化系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/static/css/bahavior.css">
+</head>
+<body>
+    <div class="header">
+        <!-- 左右数据流装饰 -->
+        <div class="data-stream"></div>
+        <div class="data-stream"></div>
+        
+        <!-- 左侧系统状态 -->
+        <div class="system-status">系统在线</div>
+        
+        <!-- 左侧箭头 -->
+        <div class="arrow-left">>>>></div>
+        
+        <!-- 主标题 -->
+        <h1>行为监测与可视化系统</h1>
+        
+        <!-- 右侧箭头 -->
+        <div class="arrow-right">>>>></div>
+        
+        <!-- 标签 -->
+        <div class="header-badge badge-version">V2.1</div>
+        <div class="header-badge badge-secure">SECURE</div>
+    </div>
+    
+    <div class="dashboard">
+        <!-- 实时监控面板 -->
+        <div class="panel">
+            <div class="panel-title">实时监控</div>
+            <div class="video-container">
+                <img id="camera-feed" src="" alt="实时监控画面">
+                <div class="behavior-label" id="current-behavior">当前行为: 等待检测...</div>
+            </div>
+        </div>
+        
+        <!-- 行为随时间变化面板 -->
+        <div class="panel">
+            <div class="panel-title">行为随时间变化</div>
+            <div class="chart-container">
+                <canvas id="timeline-chart"></canvas>
+                <div class="no-data" id="timeline-no-data">等待行为数据...</div>
+            </div>
+            <div class="behavior-legend">
+                <div class="legend-item"><div class="legend-color" style="background-color: #4CAF50;"></div>专注工作</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #FF9800;"></div>吃东西</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #2196F3;"></div>喝水</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #9C27B0;"></div>喝饮料</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #F44336;"></div>玩手机</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #607D8B;"></div>睡觉</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #795548;"></div>其他</div>
+            </div>
+        </div>
+        
+        <!-- 行为分布面板 -->
+        <div class="panel">
+            <div class="panel-title">行为分布</div>
+            <div class="chart-container">
+                <canvas id="distribution-chart"></canvas>
+                <div class="no-data" id="distribution-no-data">等待行为数据...</div>
+            </div>
+            <div class="behavior-legend">
+                <div class="legend-item"><div class="legend-color" style="background-color: #4CAF50;"></div>专注工作</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #FF9800;"></div>吃东西</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #2196F3;"></div>喝水</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #9C27B0;"></div>喝饮料</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #F44336;"></div>玩手机</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #607D8B;"></div>睡觉</div>
+                <div class="legend-item"><div class="legend-color" style="background-color: #795548;"></div>其他</div>
+            </div>
+        </div>
+        
+        <!-- 行为统计面板 -->
+        <div class="panel">
+            <div class="panel-title">行为统计</div>
+            <div class="behavior-stats">
+                <div><span>专注工作:</span> <span id="work-count">0 次</span></div>
+                <div><span>吃东西:</span> <span id="eat-count">0 次</span></div>
+                <div><span>喝水:</span> <span id="water-count">0 次</span></div>
+                <div><span>喝饮料:</span> <span id="drink-count">0 次</span></div>
+                <div><span>玩手机:</span> <span id="phone-count">0 次</span></div>
+                <div><span>睡觉:</span> <span id="sleep-count">0 次</span></div>
+                <div><span>其他:</span> <span id="other-count">0 次</span></div>
+            </div>
+            <button class="refresh-btn" id="refresh-stats-btn">
+                <span>🔄</span> 重置统计
+            </button>
+        </div>
+    </div>
+    
+    <div class="status-bar">
+        <div class="status-bar-left">
+            <span class="status-indicator" id="status-text"><span class="status-dot"></span> 等待行为检测...</span>
+        </div>
+        <div class="status-bar-center">
+            <span class="memory-usage" id="memory-usage">内存: 0%</span>
+            <span class="network-usage" id="network-usage">网络: 0 Mbps</span>
+            <span class="current-time" id="current-time">加载中...</span>
+        </div>
+        <div class="status-bar-right">
+            <a href="/" class="status-bar-btn">返回监控系统</a>
+        </div>
+    </div>
+    
+    <script src="/static/js/behavior.js"></script>
+</body>
+</html>
