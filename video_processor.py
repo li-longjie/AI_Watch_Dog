@@ -19,6 +19,9 @@ class VideoProcessor:
         self.video_source = video_source
         self.is_camera = isinstance(video_source, int)
 
+        # 添加frame_queue属性
+        self.frame_queue = queue.Queue()
+
         # 初始化视频捕获
         if self.is_camera:
             self.cap = cv2.VideoCapture(video_source, cv2.CAP_DSHOW)
@@ -35,8 +38,6 @@ class VideoProcessor:
 
         self.fps = self.cap.get(cv2.CAP_PROP_FPS) or VideoConfig.FPS
         self.frame_interval = 1.0 / self.fps
-
-        print(f"视频源: {video_source}, FPS: {self.fps}")
 
         # 线程控制
         self.running = True
@@ -69,11 +70,18 @@ class VideoProcessor:
 
     async def start_processing(self):
         """启动处理"""
-        self.running = True
-        self.webcam_thread.start()
-        asyncio.create_task(self._process_alerts())
-        while self.running:
-            await asyncio.sleep(1)
+        try:
+            # 增加日志输出
+            self.init_video_capture()
+            
+            self.running = True
+            self.webcam_thread.start()
+            asyncio.create_task(self._process_alerts())
+            while self.running:
+                await asyncio.sleep(1)
+        except Exception as e:
+            logging.error(f"视频处理错误: {e}")
+            time.sleep(0.1)
 
     async def stop_processing(self):
         """停止处理"""
@@ -150,6 +158,20 @@ class VideoProcessor:
 
                 if not self.is_camera:
                     time.sleep(max(0, self.frame_interval - (time.time() - current_time)))
+
+                # 添加到帧队列，用于WebSocket传输
+                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, VideoConfig.JPEG_QUALITY])
+                try:
+                    # 如果队列满，清空旧帧
+                    if self.frame_queue.qsize() > 10:  # 保持帧队列不过长
+                        while not self.frame_queue.empty():
+                            try:
+                                self.frame_queue.get_nowait()
+                            except queue.Empty:
+                                break
+                    self.frame_queue.put_nowait(buffer.tobytes())
+                except Exception as e:
+                    logging.error(f"添加帧到队列出错: {e}")
 
             except Exception as e:
                 logging.error(f"视频处理错误: {e}")
@@ -239,50 +261,22 @@ class VideoProcessor:
         finally:
             self.processing = False
 
-    async def video_streamer(self, websocket: WebSocket):
-        """流式传输视频帧"""
-        last_frame_time = time.time()
-        empty_frames_count = 0
-
-        try:
-            while self.running and self.start_push_queue:
-                try:
-                    current_time = time.time()
-                    frame_delay = max(0, self.frame_interval - (current_time - last_frame_time))
-                    if frame_delay > 0:
-                        await asyncio.sleep(frame_delay)
-
-                    with self.display_lock:
-                        if self.display_frame is None:
-                            empty_frames_count += 1
-                            if empty_frames_count > 10:
-                                black_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-                                _, buffer = cv2.imencode('.jpg', black_frame,
-                                                         [cv2.IMWRITE_JPEG_QUALITY, VideoConfig.JPEG_QUALITY])
-                                await websocket.send_bytes(buffer.tobytes())
-                                await asyncio.sleep(0.1)
-                            continue
-                        frame = self.display_frame.copy()
-                        empty_frames_count = 0
-
-                    timestamp = datetime.now().strftime('%H:%M:%S')
-                    cv2.putText(frame, timestamp, (frame.shape[1] - 120, frame.shape[0] - 20),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-
-                    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, VideoConfig.JPEG_QUALITY])
-                    await websocket.send_bytes(buffer.tobytes())
-
-                    last_frame_time = current_time
-
-                except WebSocketDisconnect:
+    async def video_streamer(self, websocket):
+        while True:
+            try:
+                if websocket.client_state == WebSocketState.DISCONNECTED:
+                    logging.info("WebSocket已断开连接")
                     break
-                except Exception as e:
-                    logging.error(f"视频流错误: {str(e)}")
+                
+                if self.frame_queue.empty():
                     await asyncio.sleep(0.1)
-        except Exception as e:
-            logging.error(f"视频流失败: {str(e)}")
-        finally:
-            logging.info("视频流结束")
+                    continue
+                
+                frame = self.frame_queue.get_nowait()
+                await websocket.send_bytes(frame)
+            except Exception as e:
+                logging.error(f"视频流发送错误: {e}")
+                break
 
     async def _process_alerts(self):
         """处理警报消息"""
@@ -405,4 +399,21 @@ class VideoProcessor:
         except Exception as e:
             logging.error(f"获取帧和行为数据时出错: {e}")
             return None, None
+
+    def init_video_capture(self):
+        """初始化或重新初始化视频捕获"""
+        if self.cap is not None and self.cap.isOpened():
+            self.cap.release()
+        
+        if self.is_camera:
+            self.cap = cv2.VideoCapture(self.video_source, cv2.CAP_DSHOW)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, VideoConfig.CAMERA_WIDTH)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, VideoConfig.CAMERA_HEIGHT)
+            self.cap.set(cv2.CAP_PROP_FPS, VideoConfig.FPS)
+        else:
+            self.cap = cv2.VideoCapture(self.video_source)
+        
+        if not self.cap.isOpened():
+            raise ValueError(f"无法打开视频源: {self.video_source}")
+        logging.info(f"视频捕获已初始化: {self.video_source}")
 
