@@ -87,9 +87,9 @@ os.makedirs("video_warning", exist_ok=True)
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
 # 全局变量
-active_connections = []
-recent_alerts = []
+active_connections: List[WebSocket] = [] # 添加类型提示
 MAX_ALERTS = 10
+recent_alerts: deque = deque(maxlen=MAX_ALERTS) # 再使用 deque 并设置最大长度
  
 @app.on_event("startup") 
 async def startup():
@@ -141,49 +141,63 @@ async def alerts(websocket: WebSocket):
         if websocket in active_connections:
             active_connections.remove(websocket)
 
-@app.get("/")
-async def get_index():
-    try:
-        with open("static/html/index.html", "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    except FileNotFoundError:
-        return HTMLResponse(content="<h1>404 - Index page not found</h1>", status_code=404)
 
-@app.get("/alerts")
-async def get_alerts():
+@app.get("/api/alerts")
+async def get_alerts_api(): # 修改函数名以示区分
+    # 注意：现在 recent_alerts 是 deque
     return {
         "status": "success",
-        "alerts": recent_alerts
+        "alerts": list(recent_alerts) # 返回列表
     }
 
 @app.get("/test_alert")
 async def test_alert():
     """测试预警系统 - 强制发送预警消息到所有客户端"""
-    test_alert = {
+    test_alert_data = { # 重命名变量避免覆盖内置函数
         "type": "alert",
-        "timestamp": datetime.now().strftime('%Y年%m月%d日%H点%M分'),
+        "timestamp": datetime.now().isoformat(), # 使用 ISO 格式
         "content": "测试预警：这是一条测试消息",
         "level": "important",
         "details": "这是一条测试预警，用于确认预警系统功能正常",
-        "image_url": "/video_warning/test.jpg"
+        "image_url": "/video_warning/test.jpg" # 确保路径正确
     }
     
-    # 创建测试图像
+    # 创建测试图像 (确保 cv2 和 numpy 已导入)
+    # import numpy as np
+    # import cv2
     test_img = np.zeros((480, 640, 3), dtype=np.uint8)
-    cv2.putText(test_img, "测试预警图像", (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    cv2.putText(test_img, "Test Alert Image", (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    # 确保 video_warning 目录存在
+    os.makedirs("video_warning", exist_ok=True)
     cv2.imwrite("video_warning/test.jpg", test_img)
     
     # 添加到最近预警
-    recent_alerts.append(test_alert)
-    if len(recent_alerts) > MAX_ALERTS:
-        recent_alerts.pop(0)
+    recent_alerts.append(test_alert_data)
+    # deque 会自动处理长度限制
     
     # 发送到所有连接
+    disconnected = []
+    # 使用 asyncio.gather 来并发发送
+    tasks = []
     for connection in active_connections:
-        try:
-            await connection.send_json(test_alert)
-        except Exception as e:
-            logging.error(f"发送测试预警失败: {e}")
+         if connection.client_state == WebSocketState.CONNECTED:
+             tasks.append(connection.send_json(test_alert_data))
+         else:
+             disconnected.append(connection)
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # 处理发送失败和断开的连接
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            logging.error(f"发送测试预警失败: {result}")
+            disconnected.append(active_connections[i]) # 假设 tasks 和 active_connections 顺序一致
+
+    # 清理断开的连接
+    for conn in set(disconnected): # 使用 set 去重
+        if conn in active_connections:
+            active_connections.remove(conn)
+            logging.info(f"移除了断开的连接: {conn.client}")
     
     return {"status": "success", "message": "测试预警已发送"}
 
@@ -195,39 +209,57 @@ async def alert_handler():
             if hasattr(video_processor, 'alert_queue') and not video_processor.alert_queue.empty():
                 try:
                     alert = video_processor.alert_queue.get_nowait()
-                    # 添加到最近预警
+                    # 添加到最近预警 (deque 自动处理)
                     recent_alerts.append(alert)
-                    if len(recent_alerts) > MAX_ALERTS:
-                        recent_alerts.pop(0)
                     
                     # 实时发送给所有连接
                     disconnected = []
+                    tasks = []
                     for connection in active_connections:
-                        try:
-                            await connection.send_json(alert)
-                        except:
+                        if connection.client_state == WebSocketState.CONNECTED:
+                            tasks.append(connection.send_json(alert))
+                        else:
                             disconnected.append(connection)
+
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                    # 处理发送失败和断开的连接
+                    for i, result in enumerate(results):
+                         if isinstance(result, Exception):
+                             logging.error(f"发送警报失败: {result}")
+                             # 找到对应的连接并添加到 disconnected 列表
+                             # (需要更可靠的方式关联 task 和 connection，或者直接在循环中处理异常)
+                             # 简化处理：如果发送失败，则标记为断开
+                             conn_to_remove = None
+                             task_index = 0
+                             for conn_idx, conn in enumerate(active_connections):
+                                 if conn.client_state == WebSocketState.CONNECTED:
+                                     if task_index == i:
+                                         conn_to_remove = conn
+                                         break
+                                     task_index += 1
+                             if conn_to_remove:
+                                 disconnected.append(conn_to_remove)
+
                     
                     # 清理断开的连接
-                    for conn in disconnected:
+                    for conn in set(disconnected): # 使用 set 去重
                         if conn in active_connections:
                             active_connections.remove(conn)
-                except queue.Empty:
-                    pass
-            
-            await asyncio.sleep(0.1)
-        except Exception as e:
-            logging.error(f"Alert handler error: {e}")
-            await asyncio.sleep(1)
+                            logging.info(f"移除了断开的连接: {conn.client}")
 
-@app.get("/behavior_analysis")
-async def behavior_analysis():
-    """行为分析页面"""
-    try:
-        with open("static/html/behavior.html", "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    except FileNotFoundError:
-        return HTMLResponse(content="<h1>404 - Behavior analysis page not found</h1>", status_code=404)
+                except queue.Empty:
+                    pass # 队列为空，正常情况
+                except Exception as e: # 捕获处理单个警报时的其他异常
+                    logging.error(f"处理单个警报时出错: {e}")
+            
+        except Exception as e:
+            logging.error(f"Alert handler 主循环错误: {e}")
+        finally:
+             # 无论如何都短暂休眠，防止空转 CPU 占用过高
+             await asyncio.sleep(0.1)
+
+
 
 # 添加行为数据API端点
 @app.get("/api/behavior-data")
@@ -252,10 +284,17 @@ async def get_behavior_data():
     }
 
 if __name__ == "__main__":
+    # 确保设置了正确的启动方法 (如果需要)
+    # try:
+    #     set_start_method("spawn")
+    # except RuntimeError:
+    #     pass
     print(f"启动视频服务器 http://{ServerConfig.HOST}:{ServerConfig.PORT}")
     uvicorn.run( 
-        app, 
+        "video_server:app", # 使用字符串形式以支持热重载
         host=ServerConfig.HOST,
         port=ServerConfig.PORT,
-        log_level="info"
+        log_level="info",
+        reload=False
+        #reload=ServerConfig.RELOAD # 从配置读取是否热重载
     )
