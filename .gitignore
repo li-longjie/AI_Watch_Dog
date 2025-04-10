@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+.venv/
+env/
+ENV/
+
+# 日志和临时文件
+*.log
+.coverage
+htmlcov/
+.tox/
+.pytest_cache/
+code.log
+
+# 视频文件
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.mkv
+*.jpg
+video_warning/*
+
+
+
+# 大文件
+*.pkl
+*.h5
+*.pt
+*.pth
+*.bin
+*.npz
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 操作系统相关
+.DS_Store
+Thumbs.db
+
+# 输出目录
+archive/
+
+# 不忽略的文件
+!requirements.txt
+!readme.md
