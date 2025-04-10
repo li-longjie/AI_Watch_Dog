@@ -42,9 +42,10 @@ code.log
 *.flv
 *.mkv
 *.jpg
-video_warning/*
-
-
+# 忽略 video_warning 目录下的所有内容
+video_warning/
+# 但不忽略 .gitkeep 文件，以便跟踪空目录
+!video_warning/.gitkeep
 
 # 大文件
 *.pkl
