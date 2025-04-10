@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+.venv/
+env/
+ENV/
+
+# 日志和临时文件
+*.log
+.coverage
+htmlcov/
+.tox/
+.pytest_cache/
+code.log
+
+# 视频文件
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.mkv
+video_warning/*.jpg
+video_warning/*.jpeg
+video_warning/*.png
+video_warning/*.gif
+video_warning/*.mp4
+video_warning/*.avi
+video_warning/*.mov
+
+# 数据库
+chroma_db/
+
+# 大文件
+*.pkl
+*.h5
+*.pt
+*.pth
+*.bin
+*.npz
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 操作系统相关
+.DS_Store
+Thumbs.db
+
+# 输出目录
+archive/
+
+# 不忽略的文件
+!requirements.txt
+!readme.md
+
+# 忽略测试视频文件夹
+测试视频/
+
+# 忽略大型数据文件
+*.zip
+*.rar
+*.7z
+
+# 忽略数据库文件和文件夹
+*.db
