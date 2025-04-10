@@ -1,0 +1,88 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+.venv/
+env/
+ENV/
+
+# 日志和临时文件
+*.log
+.coverage
+htmlcov/
+.tox/
+.pytest_cache/
+code.log
+
+# 视频文件
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.mkv
+# 所有video_warning中的图片文件
+video_warning/*.jpg
+video_warning/*.jpeg
+video_warning/*.png
+video_warning/*.gif
+video_warning/*.bmp
+video_warning/*.tiff
+video_warning/*.webp
+# 或者更简单地忽略所有video_warning目录内容
+video_warning/*
+output_frame.jpg
+# 特定视频文件（即使规则改变也要保持忽略）
+video_warning/output.mp4
+
+# 数据库
+chroma_db/
+
+# 大文件
+*.pkl
+*.h5
+*.pt
+*.pth
+*.bin
+*.npz
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 操作系统相关
+.DS_Store
+Thumbs.db
+
+# 输出目录
+archive/
+
+# 不忽略的文件
+!requirements.txt
+!readme.md
+!readme_en.md
+# 确保video_warning目录本身存在
+!video_warning/
+!video_warning/.gitkeep 
