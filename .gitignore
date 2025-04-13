@@ -68,7 +68,7 @@ Thumbs.db
 
 # 输出目录
 archive/
-
+passwords.txt
 # 不忽略的文件
 !requirements.txt
 !readme.md
