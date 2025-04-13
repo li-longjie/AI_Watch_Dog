@@ -38,6 +38,10 @@ class MultiModalAnalyzer:
     def __init__(self):
         self.message_queue = []
         self.time_step_story = []
+        # 添加历史描述记录和最后汇总时间
+        self.recent_descriptions = []
+        self.last_summary_time = time.time()
+        self.summary_interval = 600  # 每10分钟生成一次总结
 
     def trans_date(self,date_str):
         # Split the input string into components
@@ -56,11 +60,10 @@ class MultiModalAnalyzer:
         """分析视频内容并返回结果"""
         start_time = time.time()
         
-        # 1. 获取当前视频片段的分析结果
+        # 获取当前视频片段的分析结果
         result = await self.analyze_video(frames, fps, timestamps)
         
-        # 2. 直接返回分析结果 - 确保所有类型的活动都有输出
-        # 而不是只返回预警类活动
+        # 直接返回分析结果
         return result
 
     def generate_description(self, activity_type: str, timestamp: str) -> str:
@@ -125,96 +128,142 @@ class MultiModalAnalyzer:
         start_time = time.time()
         
         try:
-            # 1. 获取视频描述
-            description = await video_chat_async_limit_frame(prompt_vieo, frames, timestamps, fps=fps)
+            # 获取视频描述
+            description = await video_chat_async_limit_frame(prompt_vieo, frames, timestamps, fps=fps, use_oss=True)
             print("\n视频描述原文：", description)
+            
+            # 如果时间戳有效，将描述存入向量数据库
+            if timestamps is not None:
+                await self.store_video_summary(description, timestamps)
             
             if timestamps is None:
                 return description
             
-            # 2. 使用DeepSeek和prompt_detect进行异常检测
+            # 使用DeepSeek进行异常检测
             detect_prompt = prompt_detect.format(
                 description=description,
                 time=timestamps[0]
             )
             
-            # 调用DeepSeek进行异常检测
-            detection_result = await chat_completion(detect_prompt, model="deepseek")
-            print(f"\n异常检测结果：{detection_result}")
+            # 调用DeepSeek
+            detection_result_raw = await chat_completion(detect_prompt, model="deepseek")
             
-            try:
-                # 解析检测结果
-                # 期望的返回格式是JSON字符串：
-                # {
-                #    "type": "important/warning/normal",
-                #    "reason": "检测到的具体原因",
-                #    "confidence": 0.95
-                # }
-                result = json.loads(detection_result)
-                
-                # 如果检测到重要或异常情况
-                if result["type"] in ["important", "warning"]:
-                    # 提取关键信息
-                    key_points = await self.extract_key_points(description)
-                    print(f"提取的关键信息: {key_points}")
-                    
-                    # 生成预警消息
-                    if result["type"] == "important":
-                        alert_msg = f"{timestamps[0]}，{result['reason']}"
-                    else:  # warning
-                        alert_msg = f"请注意，{result['reason']}"
-                    
-                    return {
-                        "alert": alert_msg,
-                        "details": key_points,  # 使用提取的关键信息
-                        "type": result["type"],
-                        "confidence": result.get("confidence", 0.9)
-                    }
-                
-                # 如果是正常情况，返回空结果
-                return {
-                    "alert": "",
-                    "details": "",
-                    "type": "normal",
-                    "confidence": 0.0
-                }
-                
-            except json.JSONDecodeError:
-                print("异常检测结果解析失败，尝试直接处理文本结果")
-                # 如果JSON解析失败，检查文本中是否包含关键信息
-                detection_lower = detection_result.lower()
-                
-                if "重要" in detection_lower or "严重" in detection_lower:
-                    return {
-                        "alert": f"{timestamps[0]}，检测到重要情况：{detection_result}",
-                        "details": await self.extract_key_points(description),
-                        "type": "important",
-                        "confidence": 0.9
-                    }
-                elif "警告" in detection_lower or "异常" in detection_lower:
-                    return {
-                        "alert": f"请注意，{detection_result}",
-                        "details": await self.extract_key_points(description),
-                        "type": "warning",
-                        "confidence": 0.8
-                    }
-                
-                # 如果没有检测到异常，返回空结果
-                return {
-                    "alert": "",
-                    "details": "",
-                    "type": "normal",
-                    "confidence": 0.0
-                }
-                
+            # 检查返回结果是否表示错误
+            if isinstance(detection_result_raw, str) and detection_result_raw.startswith("错误："):
+                print(f"\n异常检测失败：{detection_result_raw}")
+                # 可以选择返回一个特定的值表示失败，或者重新抛出异常
+                # 这里我们返回一个特定的字符串
+                return "分析失败" 
+            elif detection_result_raw is None: # 以防 chat_completion 可能返回 None
+                print("\n异常检测失败：返回结果为 None")
+                return "分析失败"
+            else:
+                # 只有在结果看起来正常时才打印和返回
+                detection_result = detection_result_raw.strip() # 现在 strip 是安全的
+                print(f"\n异常检测结果：{detection_result}")
+                return detection_result
+            
         except Exception as e:
             print(f"视频分析错误: {e}")
             import traceback
             traceback.print_exc()
-            return {
-                "alert": "分析出错: " + str(e),
-                "details": str(e),
-                "type": "error",
-                "confidence": 0.0
-            }
+            return f"分析出错: {str(e)}"
+
+    async def maybe_generate_summary(self):
+        """检查是否需要生成历史描述总结"""
+        current_time = time.time()
+        
+        # 如果有足够的描述且间隔时间已到或描述过多
+        if ((len(self.recent_descriptions) >= 3 and 
+             current_time - self.last_summary_time > self.summary_interval) or
+            len(self.recent_descriptions) >= 10):
+            
+            await self.generate_and_store_summary()
+            self.last_summary_time = current_time
+    
+    async def generate_and_store_summary(self):
+        """生成并存储历史描述总结"""
+        if not self.recent_descriptions:
+            return
+        
+        try:
+            # 准备历史描述文本
+            history_text = "\n".join(self.recent_descriptions)
+            
+            # 使用prompt_summary模板生成总结提示词
+            summary_prompt = prompt_summary.format(histroy=history_text)
+            
+            # 调用DeepSeek生成总结
+            summary_result = await chat_completion(summary_prompt, model="deepseek")
+            print(f"\n历史总结结果：{summary_result}")
+            
+            # 添加时间范围信息
+            first_time = self.recent_descriptions[0].split(" - ")[0] if " - " in self.recent_descriptions[0] else "未知时间"
+            last_time = self.recent_descriptions[-1].split(" - ")[0] if " - " in self.recent_descriptions[-1] else "未知时间"
+            
+            summary_with_time = f"{first_time}至{last_time}的监控总结: {summary_result}"
+            
+            # 存入向量数据库
+            import httpx
+            from config import RAGConfig
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    RAGConfig.VECTOR_API_URL,
+                    json={
+                        "docs": [summary_with_time],
+                        "table_name": f"summary_{int(time.time())}"
+                    },
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    logging.info(f"监控总结已添加到向量数据库: {summary_with_time[:50]}...")
+                else:
+                    logging.error(f"添加监控总结到向量数据库失败: {response.text}")
+            
+            # 清空历史描述列表，为下一轮收集做准备
+            self.recent_descriptions = []
+            
+            return summary_result
+        except Exception as e:
+            logging.error(f"生成监控总结出错: {e}")
+            return None
+
+    async def store_video_summary(self, description, timestamp):
+        """将视频描述存入向量数据库"""
+        try:
+            import httpx
+            from config import RAGConfig
+            
+            # 添加时间信息
+            formatted_time = timestamp[0]  # 使用视频片段的开始时间
+            summary = f"{formatted_time} - {description}"
+            
+            # 添加到最近描述列表
+            self.recent_descriptions.append(summary)
+            
+            # 发送到向量数据库
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    RAGConfig.VECTOR_API_URL,
+                    json={
+                        "docs": [summary],
+                        "table_name": f"video_summary_{int(time.time())}"
+                    },
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    logging.info(f"视频描述已添加到向量数据库: {summary[:50]}...")
+                else:
+                    logging.error(f"添加视频描述到向量数据库失败: {response.text}")
+            
+            # 检查是否需要生成总结
+            await self.maybe_generate_summary()
+                    
+            return True
+        except Exception as e:
+            logging.error(f"存储视频描述到向量数据库出错: {e}")
+            return False
         

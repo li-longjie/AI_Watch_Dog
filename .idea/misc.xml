@@ -3,5 +3,17 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.13 (aiWatchdog)" />
   </component>
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
   <component name="ProjectRootManager" version="2" project-jdk-name="AI_WATCH" project-jdk-type="Python SDK" />
+=======
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.13 (aiWatchdog)" project-jdk-type="Python SDK" />
+>>>>>>> dfc45611 (Initial commit)
+=======
+  <component name="ProjectRootManager" version="2" project-jdk-name="AI_WATCH" project-jdk-type="Python SDK" />
+>>>>>>> 46f21d92 (夏一鸣第三次提交)
+=======
+  <component name="ProjectRootManager" version="2" project-jdk-name="AI_WATCH" project-jdk-type="Python SDK" />
+>>>>>>> fist_page
 </project>

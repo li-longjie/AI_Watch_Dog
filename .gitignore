@@ -43,10 +43,8 @@ code.log
 *.mkv
 *.jpg
 # 忽略 video_warning 目录下的所有内容
-video_warning/
-# 但不忽略 .gitkeep 文件，以便跟踪空目录
-!video_warning/.gitkeep
-
+video_warning
+chroma_db
 # 大文件
 *.pkl
 *.h5
@@ -67,7 +65,7 @@ Thumbs.db
 
 # 输出目录
 archive/
-
+passwords.txt
 # 不忽略的文件
 !requirements.txt
 !readme.md
