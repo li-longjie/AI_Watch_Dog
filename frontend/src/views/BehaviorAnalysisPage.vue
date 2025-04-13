@@ -1,19 +1,20 @@
 <template>
   <div class="behavior-analysis-page">
-    <AppHeader />
+    <!-- <AppHeader /> -->
 
     <div class="content-container">
-      <div class="page-header">
-        <h1>行为分析页面</h1>
+      <div class="loading-message" v-if="!wsConnected && initialLoading">
+        <div class="cyber-spinner"></div>
+        <p>连接实时分析服务中...</p>
+      </div>
+      <div class="loading-message" v-if="wsConnected && behaviorData.alerts.length === 0 && !initialLoading">
+         <div class="cyber-spinner"></div>
+         <p>等待实时行为数据...</p>
       </div>
 
-      <div class="loading-message" v-if="loading">
-        <div class="cyber-spinner"></div>
-        <p>加载行为数据中...</p>
-      </div>
 
       <draggable
-        v-if="!loading"
+        v-if="wsConnected || !initialLoading"
         v-model="panelOrder"
         class="analysis-container"
         item-key="id"
@@ -40,37 +41,270 @@
           />
         </template>
       </draggable>
+       <div class="error-message" v-if="wsError">
+         <p>连接实时分析服务失败，请检查后端服务是否运行。</p>
+         <button @click="connectAlertWebSocket" class="retry-button">重试连接</button>
+       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, shallowRef } from "vue";
-import AppHeader from "../components/AppHeader.vue";
+import { ref, onMounted, onUnmounted, shallowRef, computed, watch } from "vue";
 import draggable from "vuedraggable";
 
 // Import the new components
-import BABehaviorStats from "../components/BABehaviorStats.vue";
+import BAActivityHeatmap from "../components/BAActivityHeatmap.vue";
 import BABehaviorList from "../components/BABehaviorList.vue";
 import BABehaviorChart from "../components/BABehaviorChart.vue";
 import BARealTimeMonitoring from "../components/BARealTimeMonitoring.vue";
 
-const loading = ref(true);
+const initialLoading = ref(true);
+const MAX_ALERTS_DISPLAY = 200;
+
+// New reactive state for behavior data
 const behaviorData = ref({
-  behaviors: [],
-  statistics: {
-    total_behaviors: 0,
-    unique_behaviors: 0,
-    most_frequent: "",
+  alerts: [],
+  aggregated: {
+    types: [],
+    mostFrequentType: "无",
   },
+  timeSeries: {
+    labels: [],
+    datasets: []
+  },
+  heatmapData: []
 });
+
+let alertWs = null;
+const wsConnected = ref(false);
+const wsError = ref(false);
+
+// Function to extract behavior type from alert content
+function extractBehaviorType(content) {
+  if (!content) return "未知";
+  if (content.includes("网络请求错误")) return "未知";
+  if (content.includes("结束")) {
+      const match = content.match(/^(.*?)结束/);
+      return match ? match[1].trim() : "未知";
+  } else if (content.includes("开始")) {
+      const match = content.match(/^(.*?)开始/);
+      return match ? match[1].trim() : "未知";
+  }
+  return content.split(" ")[0];
+}
+
+// Helper to get minute string (e.g., "23:41") from timestamp
+function getMinuteString(timestamp) {
+    try {
+        const dateStr = timestamp.includes("T") ? timestamp : timestamp.replace(" ", "T") + 'Z';
+        const date = new Date(dateStr);
+        if (isNaN(date)) return null;
+        return `${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
+    } catch {
+        return null;
+    }
+}
+
+// Map behavior types to colors (consistent with pie chart)
+const behaviorColors = {
+    专注工作学习: "#22d3a7",
+    专注工作: "#22d3a7",
+    吃东西: "#f97316",
+    喝水: "#22c55e",
+    玩手机: "#ef4444",
+    睡觉: "#a855f7",
+    default: "#9ca3af", // Slightly different default grey
+};
+function getBehaviorColor(type) {
+    return behaviorColors[type] || behaviorColors.default;
+}
+
+// Function to get Hour (0-23) from timestamp
+function getHourFromTimestamp(timestamp) {
+    try {
+        const dateStr = timestamp.includes("T") ? timestamp : timestamp.replace(" ", "T") + 'Z';
+        const date = new Date(dateStr);
+        if (isNaN(date)) return null;
+        return date.getHours();
+    } catch {
+        return null;
+    }
+}
+
+// Function to update *both* aggregated and time series data
+function processAlertsAndUpdateData() {
+    const typeCounts = {};
+    const types = new Set();
+    const timeSeriesAgg = {};
+    const timeLabels = new Set();
+    const hourlyCounts = {};
+
+    const now = new Date();
+    const twentyFourHoursAgo = now.getTime() - (24 * 60 * 60 * 1000);
+
+    [...behaviorData.value.alerts].reverse().forEach(alert => {
+        const type = extractBehaviorType(alert.content);
+        const minuteStr = getMinuteString(alert.timestamp);
+        const hour = getHourFromTimestamp(alert.timestamp);
+        let alertTime = null;
+         try {
+             const dateStr = alert.timestamp.includes("T") ? alert.timestamp : alert.timestamp.replace(" ", "T") + 'Z';
+             alertTime = new Date(dateStr);
+         } catch {}
+
+        if (type !== "未知") {
+             typeCounts[type] = (typeCounts[type] || 0) + 1;
+             types.add(type);
+        }
+
+        if (minuteStr && type !== "未知") {
+            timeLabels.add(minuteStr);
+            if (!timeSeriesAgg[minuteStr]) {
+                timeSeriesAgg[minuteStr] = { total: 0 };
+            }
+            if (!timeSeriesAgg[minuteStr][type]) {
+                 timeSeriesAgg[minuteStr][type] = 0;
+             }
+
+             timeSeriesAgg[minuteStr][type]++;
+             timeSeriesAgg[minuteStr].total++;
+        }
+
+        if (hour !== null && alertTime && alertTime.getTime() >= twentyFourHoursAgo) {
+             hourlyCounts[hour] = (hourlyCounts[hour] || 0) + 1;
+        }
+    });
+
+    const aggregatedTypes = Object.entries(typeCounts).map(([type, count]) => ({ type, count }));
+    aggregatedTypes.sort((a, b) => b.count - a.count);
+    const mostFrequent = aggregatedTypes.length > 0 ? aggregatedTypes[0].type : "无";
+    behaviorData.value.aggregated = {
+        types: aggregatedTypes,
+        mostFrequentType: mostFrequent,
+    };
+
+    const sortedLabels = Array.from(timeLabels);
+    const uniqueBehaviorTypes = Array.from(types);
+    const datasets = [];
+
+    uniqueBehaviorTypes.forEach(type => {
+        datasets.push({
+            label: type,
+            type: 'bar',
+            data: sortedLabels.map(label => timeSeriesAgg[label]?.[type] || 0),
+            backgroundColor: getBehaviorColor(type),
+            stack: 'counts',
+            order: 2
+        });
+    });
+
+    datasets.push({
+        label: '总次数',
+        type: 'line',
+        data: sortedLabels.map(label => timeSeriesAgg[label]?.total || 0),
+        borderColor: 'rgba(79, 209, 197, 0.8)',
+        backgroundColor: 'rgba(79, 209, 197, 0.1)',
+        tension: 0.2,
+        fill: false,
+        borderWidth: 2,
+        pointBackgroundColor: 'rgba(79, 209, 197, 1)',
+        pointRadius: 3,
+        order: 1
+    });
+
+    const maxTimePoints = 30;
+    const startIndex = Math.max(0, sortedLabels.length - maxTimePoints);
+    const slicedLabels = sortedLabels.slice(startIndex);
+    const slicedDatasets = datasets.map(ds => ({
+        ...ds,
+        data: ds.data.slice(startIndex)
+    }));
+
+    behaviorData.value.timeSeries = {
+        labels: slicedLabels,
+        datasets: slicedDatasets,
+    };
+
+    const heatmapResult = [];
+    for (let h = 0; h < 24; h++) {
+        heatmapResult.push({
+            hour: h,
+            count: hourlyCounts[h] || 0
+        });
+    }
+    behaviorData.value.heatmapData = heatmapResult;
+}
+
+// WebSocket connection function for alerts
+function connectAlertWebSocket() {
+  if (alertWs && (alertWs.readyState === WebSocket.OPEN || alertWs.readyState === WebSocket.CONNECTING)) {
+    console.log("Alert WebSocket is already open or connecting.");
+    return;
+  }
+
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${protocol}//${window.location.host}/alerts`;
+  wsError.value = false;
+  initialLoading.value = true;
+
+  console.log("Attempting to connect to Alert WebSocket:", wsUrl);
+  alertWs = new WebSocket(wsUrl);
+
+  alertWs.onopen = () => {
+    console.log("Alert WebSocket 已连接");
+    wsConnected.value = true;
+    initialLoading.value = false;
+    wsError.value = false;
+  };
+
+  alertWs.onmessage = (event) => {
+    try {
+      const alert = JSON.parse(event.data);
+      console.log("收到行为预警:", alert);
+
+      behaviorData.value.alerts.unshift(alert);
+
+      if (behaviorData.value.alerts.length > MAX_ALERTS_DISPLAY) {
+        behaviorData.value.alerts.pop();
+      }
+
+      processAlertsAndUpdateData();
+
+    } catch (error) {
+      console.error("处理预警消息出错:", error, "原始数据:", event.data);
+    }
+  };
+
+  alertWs.onclose = (event) => {
+    console.log("Alert WebSocket 已关闭. Code:", event.code, "Reason:", event.reason);
+    wsConnected.value = false;
+    initialLoading.value = false;
+
+    if (event.code !== 1000) {
+       wsError.value = true;
+       console.error("Alert WebSocket 连接异常关闭.");
+    } else {
+      wsError.value = false;
+    }
+    alertWs = null;
+  };
+
+  alertWs.onerror = (error) => {
+    console.error("Alert WebSocket 错误:", error);
+    wsConnected.value = false;
+    initialLoading.value = false;
+    wsError.value = true;
+    alertWs = null;
+  };
+}
 
 // Panel order - Load from localStorage or use default
 const defaultPanelOrder = [
-  { id: 4 }, // RealTimeMonitoring
-  { id: 2 }, // BehaviorList
-  { id: 3 }, // BehaviorChart
-  { id: 1 }, // BehaviorStats
+  { id: 4 },
+  { id: 2 },
+  { id: 3 },
+  { id: 1 },
 ];
 const panelOrder = ref(
   JSON.parse(
@@ -80,10 +314,10 @@ const panelOrder = ref(
 
 // Panel sizes - Load from localStorage or use default
 const defaultPanelSizes = {
-  1: { width: "calc(50% - 10px)", height: "300px" },
-  2: { width: "calc(50% - 10px)", height: "300px" },
-  3: { width: "calc(50% - 10px)", height: "300px" },
-  4: { width: "calc(50% - 10px)", height: "300px" },
+  1: { height: "calc(50% - 10px)" },
+  2: { height: "calc(100% - 20px)" },
+  3: { height: "calc(50% - 10px)" },
+  4: { height: "calc(100% - 20px)" },
 };
 const panelSizes = ref(
   JSON.parse(
@@ -91,15 +325,20 @@ const panelSizes = ref(
   )
 );
 
+// Watch panelSizes for changes and update localStorage
+watch(panelSizes, (newSizes) => {
+  localStorage.setItem("baPanelSizes", JSON.stringify(newSizes));
+}, { deep: true });
+
 // Store panel refs dynamically
 const panelRefs = shallowRef({});
 
 // Map panel IDs to component names and CSS classes
 const componentMap = {
-  1: { component: BABehaviorStats, class: "behavior-stats-panel" },
-  2: { component: BABehaviorList, class: "behavior-list-panel" },
+  1: { component: BAActivityHeatmap, class: "activity-heatmap-panel" },
+  2: { component: BABehaviorList, class: "behavior-timeseries-panel" },
   3: { component: BABehaviorChart, class: "behavior-chart-panel" },
-  4: { component: BARealTimeMonitoring, class: "behavior-analysis-panel" }, // Kept old class name for now
+  4: { component: BARealTimeMonitoring, class: "behavior-analysis-panel" },
 };
 
 function getComponentName(panelId) {
@@ -107,26 +346,40 @@ function getComponentName(panelId) {
 }
 
 function getPanelClass(panelId) {
-  return componentMap[panelId]?.class || "";
+    const baseClass = componentMap[panelId]?.class || "";
+    let gridPositionClass = '';
+    const panelIndex = panelOrder.value.findIndex(p => p.id === panelId);
+
+    switch (panelIndex) {
+        case 0: gridPositionClass = 'grid-item-1'; break;
+        case 1: gridPositionClass = 'grid-item-2'; break;
+        case 2: gridPositionClass = 'grid-item-3'; break;
+        case 3: gridPositionClass = 'grid-item-4'; break;
+        default: break;
+    }
+    return `${baseClass} ${gridPositionClass}`;
 }
 
-// Provide props to components
+// Provide props to components based on new data structure
 function getComponentProps(panelId) {
   switch (panelId) {
     case 1:
-      return { statistics: behaviorData.value.statistics };
+      return { heatmapData: behaviorData.value.heatmapData };
     case 2:
-      return { behaviors: behaviorData.value.behaviors };
+      return { timeSeriesData: behaviorData.value.timeSeries };
     case 3:
-      return { behaviors: behaviorData.value.behaviors };
+      return {
+          behaviorTypes: behaviorData.value.aggregated.types,
+          mostFrequent: behaviorData.value.aggregated.mostFrequentType
+      };
     case 4:
-      return {}; // BARealTimeMonitoring manages its own state
+      return {};
     default:
       return {};
   }
 }
 
-// --- Resizing Logic (kept from original) ---
+// --- Resizing Logic (minor adjustments might be needed for grid) ---
 const resizing = ref({
   active: false,
   panelId: null,
@@ -139,13 +392,10 @@ const resizing = ref({
 });
 
 function getPanelStyle(panelId) {
-  // Return default if size info is missing (e.g., after clearing localStorage)
   const size = panelSizes.value[panelId] || defaultPanelSizes[panelId];
   return {
-    // Width is now controlled by the grid, height is controlled by state
-    // width: size.width,
     height: size.height,
-    position: "relative", // Keep relative positioning for handles
+    position: "relative",
   };
 }
 
@@ -172,12 +422,12 @@ function startResize(event, panelId, direction) {
     startY: event.clientY,
     startWidth: rect.width,
     startHeight: rect.height,
-    targetElement: panelElement, // Store the element being resized
+    targetElement: panelElement,
   };
 
   panelElement.classList.add("resizing");
-  document.body.style.cursor = getResizeCursor(direction); // Set cursor on body
-  document.body.style.userSelect = "none"; // Prevent text selection during resize
+  document.body.style.cursor = getResizeCursor(direction);
+  document.body.style.userSelect = "none";
 
   document.addEventListener("mousemove", handleResize);
   document.addEventListener("mouseup", stopResize);
@@ -186,44 +436,26 @@ function startResize(event, panelId, direction) {
 function handleResize(event) {
   if (!resizing.value.active) return;
 
-  const { panelId, direction, startX, startY, startWidth, startHeight } =
-    resizing.value;
-
-  let newWidth = startWidth;
+  const { panelId, direction, startY, startHeight } = resizing.value;
   let newHeight = startHeight;
-  const deltaX = event.clientX - startX;
   const deltaY = event.clientY - startY;
 
-  if (direction.includes("e")) {
-    newWidth = startWidth + deltaX;
-  }
-  if (direction.includes("w")) {
-    newWidth = startWidth - deltaX;
-    // Note: Resizing from 'w' might require position adjustments if not using grid/flex layout correctly
-  }
   if (direction.includes("s")) {
     newHeight = startHeight + deltaY;
   }
   if (direction.includes("n")) {
     newHeight = startHeight - deltaY;
-    // Note: Resizing from 'n' might require position adjustments
   }
 
-  // Apply minimum dimensions
-  newWidth = Math.max(250, newWidth); // Increased min width
-  newHeight = Math.max(200, newHeight); // Increased min height
-
-  // Update panel size state
-  panelSizes.value[panelId] = {
-    width: `${newWidth}px`,
-    height: `${newHeight}px`,
-  };
-
-  // Optional: Apply style directly for smoother feedback, though Vue reactivity should handle it
-  // if (resizing.value.targetElement) {
-  //   resizing.value.targetElement.style.width = `${newWidth}px`;
-  //   resizing.value.targetElement.style.height = `${newHeight}px`;
-  // }
+  if (direction.includes("s") || direction.includes("n")) {
+       newHeight = Math.max(100, newHeight);
+       panelSizes.value[panelId] = {
+         ...panelSizes.value[panelId],
+         height: `${newHeight}px`,
+       };
+  } else {
+      console.log("Horizontal resizing is disabled in this grid layout.");
+  }
 }
 
 function stopResize() {
@@ -233,98 +465,38 @@ function stopResize() {
     resizing.value.targetElement.classList.remove("resizing");
   }
 
-  // Save sizes to localStorage
-  localStorage.setItem("baPanelSizes", JSON.stringify(panelSizes.value));
-
   resizing.value.active = false;
   resizing.value.targetElement = null;
-  document.body.style.cursor = ""; // Reset cursor
-  document.body.style.userSelect = ""; // Reset user select
+  document.body.style.cursor = "";
+  document.body.style.userSelect = "";
 
   document.removeEventListener("mousemove", handleResize);
   document.removeEventListener("mouseup", stopResize);
 }
 
 function getResizeCursor(direction) {
-  switch (direction) {
-    case "n":
-      return "n-resize";
-    case "s":
-      return "s-resize";
-    case "e":
-      return "e-resize";
-    case "w":
-      return "w-resize";
-    case "ne":
-      return "ne-resize";
-    case "nw":
-      return "nw-resize";
-    case "se":
-      return "se-resize";
-    case "sw":
-      return "sw-resize";
-    default:
-      return "default";
-  }
+  if (direction.includes("n")) return "n-resize";
+  if (direction.includes("s")) return "s-resize";
+  return "default";
 }
-
 // --- End Resizing Logic ---
-
-// Fetch initial data (kept from original, uses mock data)
-async function fetchBehaviorData() {
-  try {
-    loading.value = true;
-    // Using mock data
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    behaviorData.value = {
-      behaviors: [
-        { id: 1, type: "专注工作", count: 5, timestamp: "2025-03-28 20:10:00" },
-        { id: 2, type: "吃东西", count: 3, timestamp: "2025-03-28 20:12:30" },
-        { id: 3, type: "喝水", count: 2, timestamp: "2025-03-28 20:15:45" },
-        { id: 4, type: "玩手机", count: 4, timestamp: "2025-03-28 20:18:20" },
-        { id: 5, type: "睡觉", count: 1, timestamp: "2025-03-28 20:20:00" },
-      ],
-      statistics: {
-        total_behaviors: 15,
-        unique_behaviors: 5,
-        most_frequent: "专注工作",
-      },
-    };
-    loading.value = false;
-  } catch (error) {
-    console.error("获取行为数据出错:", error);
-    // Load mock data even on error
-    behaviorData.value = {
-      behaviors: [
-        { id: 1, type: "专注工作", count: 5, timestamp: "2025-03-28 20:10:00" },
-        { id: 2, type: "吃东西", count: 3, timestamp: "2025-03-28 20:12:30" },
-        { id: 3, type: "喝水", count: 2, timestamp: "2025-03-28 20:15:45" },
-        { id: 4, type: "玩手机", count: 4, timestamp: "2025-03-28 20:18:20" },
-        { id: 5, type: "睡觉", count: 1, timestamp: "2025-03-28 20:20:00" },
-      ],
-      statistics: {
-        total_behaviors: 15,
-        unique_behaviors: 5,
-        most_frequent: "专注工作",
-      },
-    };
-    loading.value = false;
-  }
-}
 
 // Save panel order to localStorage
 function savePanelOrder() {
   localStorage.setItem("baPanelOrder", JSON.stringify(panelOrder.value));
 }
 
-onMounted(async () => {
-  await fetchBehaviorData();
-  // Note: WebSocket connection is now handled within BARealTimeMonitoring
+onMounted(() => {
+  connectAlertWebSocket();
 });
 
 onUnmounted(() => {
-  // Remove global listeners if they were added outside the resize logic
+  if (alertWs) {
+    alertWs.onclose = null;
+    alertWs.onerror = null;
+    alertWs.close();
+    alertWs = null;
+  }
   document.removeEventListener("mousemove", handleResize);
   document.removeEventListener("mouseup", stopResize);
 });
@@ -339,7 +511,7 @@ onUnmounted(() => {
   background-color: var(--dark-bg);
   color: var(--text-primary);
   position: relative;
-  overflow: hidden; /* Prevent body scroll */
+  overflow: hidden;
 }
 
 /* Cyberpunk background */
@@ -384,63 +556,41 @@ onUnmounted(() => {
   flex: 1;
   padding: 20px;
   max-width: 1400px;
-  margin: -35px auto; /* Reduced top margin, kept bottom */
-  width: calc(100% - 40px); /* Account for padding */
+  margin: 0 auto 20px;
+  width: calc(100% - 40px);
   display: flex;
   flex-direction: column;
-}
-
-.page-header {
-  text-align: center;
-  margin-bottom: -20px; /* Reduced space below header */
-  position: relative; /* For pseudo-elements */
-  width: fit-content; /* Fit content width */
-  align-self: center; /* Center header */
-}
-
-.page-header h1 {
-  color: var(--cyber-neon);
-  font-size: 1.8rem;
-  text-shadow: 0 0 10px rgba(79, 209, 197, 0.5);
-  display: inline-block;
-  letter-spacing: 1px;
-  white-space: nowrap;
   position: relative;
-  padding-bottom: 5px; /* Space for underline */
 }
 
-/* Title decoration */
-.page-header h1::before {
-  content: "// ";
-  color: rgba(79, 209, 197, 0.7);
-  font-weight: normal;
-}
-
-.page-header h1::after {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  left: 50%; /* Start from center */
-  transform: translateX(-50%);
-  width: 80%; /* Underline width */
-  height: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    var(--cyber-neon),
-    transparent
-  );
-  box-shadow: 0 0 8px var(--cyber-neon);
-}
-
-.loading-message {
+.loading-message, .error-message {
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  height: 300px;
+  min-height: 200px;
+  flex-grow: 1;
+  text-align: center;
   color: var(--text-secondary);
-  font-size: 1.2rem;
+  font-size: 1.1rem;
+  padding: 20px;
+}
+.error-message p {
+  margin-bottom: 15px;
+  color: var(--error-color, #ff6b6b);
+}
+.retry-button {
+    padding: 8px 15px;
+    background-color: var(--cyber-neon);
+    color: var(--dark-bg);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    font-weight: bold;
+}
+.retry-button:hover {
+    background-color: #4fd1c5;
 }
 
 .cyber-spinner {
@@ -463,37 +613,35 @@ onUnmounted(() => {
 }
 
 .analysis-container {
-  /* display: flex; */ /* Changed from flex */
-  /* flex-wrap: wrap; */
-  display: grid; /* Use Grid for layout */
-  grid-template-columns: repeat(2, 1fr); /* Create 2 equal columns */
-  /* grid-auto-rows: minmax(200px, auto); /* Let rows grow, but have a min height */
-  /* Let height be controlled by panelSizes state */
-  gap: 0px 20px; /* Row gap 0, Column gap 20px */
-  padding: 10px; /* Restore padding */
-  flex: 1; /* Allow container to grow */
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, auto);
+  gap: 20px;
+  padding: 10px 0;
+  flex: 1;
+  min-height: 500px;
 }
 
-/* Default Panel Styles (can be overridden by components if needed) */
+/* Assign grid position using classes (adjust if using grid-template-areas) */
+.grid-item-1 { grid-column: 1 / 2; grid-row: 1 / 2; }
+.grid-item-2 { grid-column: 2 / 3; grid-row: 1 / 2; }
+.grid-item-3 { grid-column: 1 / 2; grid-row: 2 / 3; }
+.grid-item-4 { grid-column: 2 / 3; grid-row: 2 / 3; }
+
+/* Default Panel Styles */
 .panel {
-  /* Removed flex width calculation, grid handles width */
-  /* width and height are now set via :style binding */
-  margin: 0 0 -1.1px 0 !important; /* Try slightly larger negative margin */
-  box-sizing: border-box; /* Ensure padding/border are included in height */
+  margin: 0 !important;
+  box-sizing: border-box;
   background-color: rgba(10, 25, 47, 0.7);
-  /* border: 1px solid rgba(79, 209, 197, 0.3); */ /* Remove unified border */
-  /* Apply borders individually, excluding bottom */
-  border-top: 1px solid rgba(79, 209, 197, 0.3);
-  border-left: 1px solid rgba(79, 209, 197, 0.3);
-  border-right: 1px solid rgba(79, 209, 197, 0.3);
+  border: 1px solid rgba(79, 209, 197, 0.3);
   border-radius: 5px;
   box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
   display: flex;
   flex-direction: column;
-  overflow: hidden; /* Important for content clipping */
+  overflow: hidden;
   transition: box-shadow 0.3s ease, border-color 0.3s ease;
-  position: relative; /* Ensure resize handles are positioned correctly */
-  transform: translateZ(0); /* Force hardware acceleration / new layer */
+  position: relative;
+  transform: translateZ(0);
 }
 
 .panel:hover {
@@ -506,28 +654,28 @@ onUnmounted(() => {
   content: "";
   position: absolute;
   top: -1px;
-  right: -1px; /* Adjusted position */
+  right: -1px;
   width: 30px;
   height: 30px;
   border-top: 2px solid var(--cyber-neon);
   border-right: 2px solid var(--cyber-neon);
   opacity: 0.7;
   pointer-events: none;
-  border-radius: 0 5px 0 0; /* Match panel radius */
+  border-radius: 0 5px 0 0;
 }
 
 .cyber-panel::after {
   content: "";
   position: absolute;
   bottom: -1px;
-  left: -1px; /* Adjusted position */
+  left: -1px;
   width: 30px;
   height: 30px;
   border-bottom: 2px solid var(--cyber-neon);
   border-left: 2px solid var(--cyber-neon);
   opacity: 0.7;
   pointer-events: none;
-  border-radius: 0 0 0 5px; /* Match panel radius */
+  border-radius: 0 0 0 5px;
 }
 
 /* Drag and Drop Styles */
@@ -544,97 +692,67 @@ onUnmounted(() => {
 }
 
 .drag-panel {
-  /* Optional: Style for the element being actively dragged */
   transform: scale(1.02);
   z-index: 30;
 }
 
 /* Resizing Styles */
 .panel.resizing {
-  transition: none !important; /* Disable transitions during resize */
+  transition: none !important;
   border-color: rgba(79, 209, 197, 0.8);
   box-shadow: 0 0 10px rgba(79, 209, 197, 0.5);
-  z-index: 15; /* Ensure resizing panel is above others */
+  z-index: 15;
 }
 
-/* Global resize handle styles (if not fully encapsulated in components) */
+/* Global resize handle styles (Adjusted for vertical only focus) */
 .resize-handle {
   position: absolute;
-  background-color: transparent; /* Make handles invisible initially */
+  background-color: transparent;
   z-index: 10;
   transition: background-color 0.2s ease;
 }
 .panel:hover .resize-handle {
-  background-color: rgba(79, 209, 197, 0.1); /* Show on panel hover */
+  background-color: rgba(79, 209, 197, 0.1);
 }
 .resize-handle:hover {
-  background-color: rgba(
-    79,
-    209,
-    197,
-    0.4
-  ) !important; /* Highlight handle on hover */
+  background-color: rgba(79, 209, 197, 0.4) !important;
 }
 
-/* Specific handle positions (ensure these match component implementations) */
-.resize-e {
-  top: 0;
-  right: 0;
-  width: 8px;
-  height: 100%;
-  cursor: e-resize;
-}
-.resize-w {
-  top: 0;
-  left: 0;
-  width: 8px;
-  height: 100%;
-  cursor: w-resize;
-}
-.resize-s {
-  bottom: 0;
+/* Only enable vertical resize handles visually and functionally */
+.resize-s, .resize-n {
   left: 0;
   width: 100%;
   height: 8px;
-  cursor: s-resize;
 }
-.resize-n {
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 8px;
-  cursor: n-resize;
-}
-.resize-se {
-  bottom: 0;
-  right: 0;
+.resize-s { bottom: 0; cursor: s-resize; }
+.resize-n { top: 0; cursor: n-resize; }
+
+/* Disable horizontal handles */
+.resize-e, .resize-w { display: none; }
+
+/* Disable corner handles or adapt them for vertical-only */
+.resize-se, .resize-sw, .resize-ne, .resize-nw {
   width: 15px;
   height: 15px;
-  cursor: se-resize;
-  border-radius: 0 0 5px 0;
 }
-.resize-sw {
-  bottom: 0;
-  left: 0;
-  width: 15px;
-  height: 15px;
-  cursor: sw-resize;
-  border-radius: 0 0 0 5px;
+.resize-se { bottom: 0; right: 0; cursor: s-resize; border-radius: 0 0 5px 0; }
+.resize-sw { bottom: 0; left: 0; cursor: s-resize; border-radius: 0 0 0 5px; }
+.resize-ne { top: 0; right: 0; cursor: n-resize; border-radius: 0 5px 0 0; }
+.resize-nw { top: 0; left: 0; cursor: n-resize; border-radius: 5px 0 0 0; }
+
+/* Add or adjust styles for the new time series panel if needed */
+.behavior-timeseries-panel {
+  /* specific styles */
 }
-.resize-ne {
-  top: 0;
-  right: 0;
-  width: 15px;
-  height: 15px;
-  cursor: ne-resize;
-  border-radius: 0 5px 0 0;
+
+/* Specific panel classes if needed */
+.activity-heatmap-panel {
+  /* styles for heatmap panel */
 }
-.resize-nw {
-  top: 0;
-  left: 0;
-  width: 15px;
-  height: 15px;
-  cursor: nw-resize;
-  border-radius: 5px 0 0 0;
+.behavior-chart-panel {
+  /* styles for doughnut panel */
+}
+.behavior-analysis-panel {
+  /* styles for monitoring panel */
 }
 </style>

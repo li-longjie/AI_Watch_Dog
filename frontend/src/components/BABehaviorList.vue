@@ -1,30 +1,14 @@
 <template>
   <div>
     <div class="panel-title">
-      <span class="panel-icon">📝</span>
-      行为记录
+      <span class="panel-icon">⏱️</span>
+      行为时间趋势
       <div class="panel-decoration"></div>
     </div>
-    <div class="behavior-list">
-      <div
-        v-for="behavior in behaviors"
-        :key="behavior.id"
-        class="behavior-item cyber-list-item"
-      >
-        <div class="behavior-time">{{ formatTime(behavior.timestamp) }}</div>
-        <div class="behavior-type">{{ behavior.type }}</div>
-        <div class="behavior-bar-container">
-          <div
-            class="behavior-bar"
-            :style="{ width: calculateBarWidth(behavior.count) }"
-            :title="`${behavior.count}次`"
-          >
-            <span class="bar-value-label">{{ behavior.count }}</span>
-          </div>
-        </div>
-      </div>
-      <div v-if="!behaviors || behaviors.length === 0" class="no-data">
-        暂无行为数据
+    <div class="chart-container">
+      <canvas ref="timeSeriesChartCanvas"></canvas>
+      <div v-if="!hasData" class="no-data">
+        等待行为数据...
       </div>
     </div>
     <!-- Resize Handles -->
@@ -44,53 +28,203 @@
 </template>
 
 <script setup>
-import { defineProps, defineEmits, computed } from "vue";
+import { defineProps, defineEmits, ref, watch, onMounted, onBeforeUnmount, computed } from "vue";
+import Chart from 'chart.js/auto';
+import 'chartjs-adapter-date-fns'; // Import adapter if using time scale
 
 const props = defineProps({
-  behaviors: {
-    type: Array,
+  timeSeriesData: {
+    type: Object,
     required: true,
-    default: () => [],
+    default: () => ({ labels: [], datasets: [] }), // { labels: string[], datasets: ChartDataset[] }
   },
 });
 
 defineEmits(["start-resize"]);
 
-const maxCount = computed(() => {
-  if (!props.behaviors || props.behaviors.length === 0) return 10;
-  return Math.max(...props.behaviors.map((b) => b.count), 1);
+const timeSeriesChartCanvas = ref(null);
+let chartInstance = null;
+
+// 将"专注工作学习"的颜色设为绿色
+const behaviorColors = {
+  专注工作学习: "#22d3a7",
+  专注工作: "#22d3a7",
+  专注: "#22d3a7",
+  吃东西: "#f97316",
+  喝水: "#22c55e",
+  玩手机: "#ef4444", 
+  睡觉: "#a855f7",
+  default: "#6b7280"
+};
+
+// Check if there's valid data to display
+const hasData = computed(() => {
+    return props.timeSeriesData &&
+           Array.isArray(props.timeSeriesData.labels) &&
+           props.timeSeriesData.labels.length > 0 &&
+           Array.isArray(props.timeSeriesData.datasets) &&
+           props.timeSeriesData.datasets.length > 0;
 });
 
-function calculateBarWidth(count) {
-  const scaleFactor = 90;
-  const percentage = (count / maxCount.value) * scaleFactor;
-  return `${Math.max(percentage, 15)}%`;
+function renderChart() {
+  if (!timeSeriesChartCanvas.value) return;
+  const ctx = timeSeriesChartCanvas.value.getContext("2d");
+
+  if (chartInstance) {
+    // More efficient update instead of destroy/recreate
+    chartInstance.data.labels = props.timeSeriesData.labels;
+    
+    // 在更新图表之前应用颜色
+    if (props.timeSeriesData.datasets && Array.isArray(props.timeSeriesData.datasets)) {
+      const updatedDatasets = [...props.timeSeriesData.datasets];
+      for (let i = 0; i < updatedDatasets.length; i++) {
+        if (updatedDatasets[i].type === 'bar') {
+          updatedDatasets[i] = {
+            ...updatedDatasets[i],
+            backgroundColor: behaviorColors[updatedDatasets[i].label] || behaviorColors.default
+          };
+        }
+      }
+      chartInstance.data.datasets = updatedDatasets;
+    } else {
+      chartInstance.data.datasets = props.timeSeriesData.datasets;
+    }
+    
+    chartInstance.update(); // Use Chart.js update method
+    return;
+  }
+
+   // Only create chart if data exists
+   if (!hasData.value) {
+       console.log("No time series data to render.");
+       return;
+   }
+
+  // 确保在创建图表之前应用颜色
+  const datasets = [];
+  if (props.timeSeriesData.datasets && Array.isArray(props.timeSeriesData.datasets)) {
+    for (const dataset of props.timeSeriesData.datasets) {
+      if (dataset.type === 'bar') {
+        datasets.push({
+          ...dataset,
+          backgroundColor: behaviorColors[dataset.label] || behaviorColors.default
+        });
+      } else {
+        datasets.push(dataset);
+      }
+    }
+  }
+
+  chartInstance = new Chart(ctx, {
+    // Type needs to be 'bar' or 'line' initially, datasets specify their own type
+     type: 'bar', // Set a base type, but datasets will override
+    data: {
+      labels: props.timeSeriesData.labels,
+      datasets: datasets.length > 0 ? datasets : props.timeSeriesData.datasets,
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { // Improve tooltip interaction
+          mode: 'index', // Show tooltips for all datasets at that index
+          intersect: false,
+      },
+      plugins: {
+        legend: {
+          position: 'top', // Move legend to top
+          labels: {
+             color: 'rgba(255, 255, 255, 0.8)',
+             font: { size: 11 },
+             boxWidth: 10,
+             boxHeight: 10,
+             padding: 8,
+             usePointStyle: true,
+             pointStyle: 'rectRounded',
+          },
+        },
+        tooltip: { // Customize tooltips
+            enabled: true,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            titleColor: 'rgba(255, 255, 255, 0.9)',
+            bodyColor: 'rgba(255, 255, 255, 0.8)',
+            padding: 10,
+            borderColor: 'rgba(79, 209, 197, 0.5)',
+            borderWidth: 1,
+            usePointStyle: true,
+            callbacks: {
+                // Optional: customize tooltip content
+                // title: function(context) { return `Time: ${context[0].label}`; },
+                // label: function(context) {
+                //     let label = context.dataset.label || '';
+                //     if (label) { label += ': '; }
+                //     if (context.parsed.y !== null) { label += context.parsed.y; }
+                //     return label;
+                // }
+            }
+        },
+         // Datalabels might be too cluttered on this chart, disable for now
+        // datalabels: {
+        //    display: false,
+        // },
+      },
+      scales: {
+        x: {
+          stacked: true, // Stack bars on X-axis
+          grid: {
+            color: 'rgba(255, 255, 255, 0.1)', // Lighter grid lines
+          },
+          ticks: {
+            color: 'rgba(255, 255, 255, 0.7)',
+            maxRotation: 0, // Prevent label rotation
+            autoSkip: true, // Skip labels if too crowded
+            maxTicksLimit: 10 // Limit number of visible ticks
+          },
+        },
+        y: {
+          stacked: true, // Stack bars on Y-axis
+          beginAtZero: true,
+          grid: {
+            color: 'rgba(255, 255, 255, 0.1)',
+          },
+          ticks: {
+            color: 'rgba(255, 255, 255, 0.7)',
+             stepSize: 1 // Ensure integer steps for counts
+          },
+          title: {
+              display: true,
+              text: '行为次数',
+              color: 'rgba(255, 255, 255, 0.7)',
+              font: { size: 12 }
+          }
+        },
+      },
+    },
+  });
 }
 
-function formatTime(timestamp) {
-  if (!timestamp) return "";
-  try {
-    const dateStr = timestamp.includes("T")
-      ? timestamp
-      : timestamp.replace(" ", "T");
-    const date = new Date(dateStr);
-    if (isNaN(date)) {
-      console.warn("Invalid date format for timestamp:", timestamp);
-      return timestamp;
-    }
-    return `${date.getHours().toString().padStart(2, "0")}:${date
-      .getMinutes()
-      .toString()
-      .padStart(2, "0")}`;
-  } catch (error) {
-    console.error("Error formatting time:", timestamp, error);
-    return timestamp;
+watch(
+  () => props.timeSeriesData,
+  () => {
+    renderChart();
+  },
+  { deep: true } // No immediate needed if we rely on parent sending initial data
+);
+
+onMounted(() => {
+  // Initial render attempt - might be empty if WS hasn't sent data yet
+  renderChart();
+});
+
+onBeforeUnmount(() => {
+  if (chartInstance) {
+    chartInstance.destroy();
+    chartInstance = null;
   }
-}
+});
+
 </script>
 
 <style scoped>
-/* Panel Title and List Styles remain the same */
 .panel-title {
   padding: 10px 15px;
   font-size: 1.1rem;
@@ -108,109 +242,32 @@ function formatTime(timestamp) {
 .panel-icon {
   margin-right: 8px;
 }
-.behavior-list {
-  overflow-y: auto;
-  height: calc(100% - 45px);
-  flex-grow: 1;
-  scrollbar-width: thin;
-  scrollbar-color: var(--cyber-neon) rgba(13, 25, 42, 0.5);
-  background-color: rgba(10, 25, 47, 0.7);
-  border-radius: 0 0 5px 5px;
-}
-.behavior-list::-webkit-scrollbar {
-  width: 6px;
-}
-.behavior-list::-webkit-scrollbar-track {
-  background: rgba(13, 25, 42, 0.5);
-}
-.behavior-list::-webkit-scrollbar-thumb {
-  background-color: var(--cyber-neon);
-  border-radius: 3px;
-}
-.behavior-item {
-  display: flex;
-  justify-content: space-between;
+
+/* Reuse chart container style */
+.chart-container {
+  position: relative;
+  width: 100%;
+  height: calc(100% - 45px); /* Adjust based on title height */
+  padding: 15px; /* Add padding around the chart */
+  box-sizing: border-box;
+  background-color: rgba(10, 25, 47, 0.7); /* Same background */
+  border-radius: 0 0 5px 5px; /* Match panel rounding */
+  display: flex; /* Center canvas if needed, though chartjs handles size */
+  justify-content: center;
   align-items: center;
-  padding: 8px 15px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  transition: background-color 0.2s ease;
-  gap: 15px;
-}
-.behavior-item:hover {
-  background-color: rgba(79, 209, 197, 0.1);
-}
-.cyber-list-item {
-  position: relative;
-  overflow: visible;
-}
-.cyber-list-item::before {
-  content: ">";
-  position: absolute;
-  left: 5px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--cyber-neon);
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-.cyber-list-item:hover::before {
-  opacity: 1;
-}
-.behavior-time {
-  color: var(--text-secondary);
-  font-family: monospace;
-  min-width: 50px;
-  flex-shrink: 0;
-}
-.behavior-type {
-  font-weight: bold;
-  color: var(--text-primary);
-  flex-grow: 1;
-  margin: 0;
-  text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-/* Bar chart styles: RTL Growth, Label inside Start */
-.behavior-bar-container {
-  width: 120px;
-  height: 18px;
-  border-radius: 9px;
-  position: relative;
-  flex-shrink: 0;
-  background-color: rgba(0, 0, 0, 0.2); /* Track color */
-  overflow: hidden; /* Clip the bar */
-}
-
-.behavior-bar {
+canvas {
+  width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, #1e6bdf, #4fd1c5);
-  border-radius: 9px;
-  transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.1),
-    inset 0 -1px 2px rgba(0, 0, 0, 0.2);
-  margin-left: auto; /* RTL Growth */
-  display: flex;
-  align-items: center;
-  justify-content: flex-start; /* Position label at the start (left) */
-}
-
-.bar-value-label {
-  font-size: 0.85em;
-  color: rgba(255, 255, 255, 0.9);
-  font-weight: bold;
-  line-height: 1;
-  white-space: nowrap;
-  flex-shrink: 0;
-  padding-left: 6px; /* Padding from the left edge */
-  text-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
 }
 
 .no-data {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   text-align: center;
-  padding: 30px;
   color: var(--text-secondary);
   font-style: italic;
 }
@@ -224,26 +281,12 @@ function formatTime(timestamp) {
 .resize-handle:hover {
   background-color: rgba(79, 209, 197, 0.5);
 }
-.resize-w {
-  top: 0;
-  left: 0;
-  width: 5px;
-  height: 100%;
-  cursor: w-resize;
-}
+.resize-w { display: none; }
 .resize-s {
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 5px;
-  cursor: s-resize;
+  bottom: 0; left: 0; width: 100%; height: 8px; cursor: s-resize;
 }
 .resize-sw {
-  bottom: 0;
-  left: 0;
-  width: 15px;
-  height: 15px;
-  cursor: sw-resize;
-  border-radius: 0 0 0 5px;
+  bottom: 0; left: 0; width: 15px; height: 15px; cursor: s-resize; border-radius: 0 0 0 5px;
 }
+
 </style>

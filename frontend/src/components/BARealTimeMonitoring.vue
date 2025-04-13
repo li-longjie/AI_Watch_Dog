@@ -14,13 +14,12 @@
       />
       <div v-else class="video-status">
         <span class="status-message">
-          {{ wsConnected ? "等待视频数据..." : "视频连接失败，请检查服务状态" }}
+          {{ wsConnected ? "等待视频数据..." : "视频连接失败" }}
         </span>
         <div v-if="wsConnected" class="loading-spinner"></div>
       </div>
       <div class="video-timestamp" v-if="videoFeed">
-        <span class="timestamp-text">实时</span>
-        <span class="timestamp-blink">•</span>
+        <span class="timestamp-blink" title="实时连接中">•</span>
       </div>
       <div class="data-flow"></div>
       <div class="corner-decoration top-left"></div>
@@ -191,20 +190,19 @@ onUnmounted(() => {
   position: absolute;
   top: 10px;
   right: 10px;
-  background: rgba(0, 0, 0, 0.6);
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: 0;
   display: flex;
+  justify-content: center;
   align-items: center;
-  gap: 5px;
-  color: var(--text-primary);
-  font-size: 12px;
   z-index: 3;
 }
 
 .timestamp-blink {
-  color: #ff4444;
+  color: #22c55e;
   animation: blink 1s infinite;
+  font-size: 24px;
+  line-height: 1;
+  display: block;
 }
 
 .corner-decoration {
@@ -273,9 +271,11 @@ onUnmounted(() => {
   0%,
   100% {
     opacity: 1;
+    text-shadow: 0 0 5px #22c55e;
   }
   50% {
-    opacity: 0;
+    opacity: 0.4;
+    text-shadow: none;
   }
 }
 

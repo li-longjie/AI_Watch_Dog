@@ -1,19 +1,20 @@
 <script setup>
-import HelloWorld from './components/HelloWorld.vue'
-import StatusBar from './components/StatusBar.vue'
+// import HelloWorld from './components/HelloWorld.vue' // 已删除，移除导入
+import StatusBar from './components/AppFooter.vue'
+import AppHeader from './components/AppHeader.vue'
 </script>
 
 <template>
   <div id="app-container">
     <!-- 这里可以放置全局 Header (如果需要) -->
-    <!-- <AppHeader /> -->
+    <AppHeader />
 
     <main>
       <!-- 路由匹配到的组件将在这里渲染 -->
       <router-view />
     </main>
 
-    <!-- 全局状态栏 -->
+    <!-- 保留底部状态栏 -->
     <StatusBar />
   </div>
 </template>

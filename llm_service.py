@@ -33,8 +33,10 @@ class LLMService:
                 result = response.json()
                 return result["choices"][0]["message"]["content"]
         except Exception as e:
-            print(f"调用大模型出错: {e}")
-            return "抱歉，生成回答时出现错误。"
+            # 使用 logging 记录错误
+            logging.error(f"调用 LLMService.get_response 时出错: {e}")
+            # 返回具体的错误信息
+            return f"生成回答错误: {str(e)}"
 
     @staticmethod
     def format_response(response: str) -> str:
@@ -43,70 +45,86 @@ class LLMService:
         return response.strip()
 
 async def chat_completion(
-    prompt: str, 
-    model: str = "deepseek", 
+    prompt: str,
+    model: str = "deepseek", # Keep default or change if needed
     temperature: float = None,
     max_tokens: int = 1024
 ) -> str:
-    """调用LLM模型进行文本生成
-    
-    Args:
-        prompt: 提示词
-        model: 模型名称，支持"deepseek"或"qwen"
-        temperature: 温度参数，控制随机性
-        max_tokens: 最大生成token数
-        
-    Returns:
-        生成的文本
-    """
+    """调用 Chutes.ai LLM模型进行文本生成"""
     if model.lower() == "deepseek":
-        return await deepseek_chat(prompt, temperature, max_tokens)
-    else:  # 默认使用qwen
-        return await qwen_chat(prompt, temperature, max_tokens)
+        api_key = APIConfig.DEEPSEEK_API_KEY
+        model_name = APIConfig.DEEPSEEK_MODEL
+    else:  # Default to Qwen if not deepseek
+        api_key = APIConfig.QWEN_API_KEY
+        model_name = APIConfig.QWEN_MODEL
 
-async def deepseek_chat(
-    prompt: str, 
-    temperature: float = None, 
-    max_tokens: int = 1024
-) -> str:
-    """调用DeepSeek模型API"""
+    api_url = "https://llm.chutes.ai/v1/chat/completions" # Chutes.ai endpoint
+
+    headers = {
+        "Authorization": f"Bearer {api_key}", # Correct Bearer token format
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature if temperature is not None else APIConfig.TEMPERATURE,
+        "max_tokens": max_tokens,
+        # Add other parameters if supported by Chutes.ai and needed
+        # "top_p": APIConfig.TOP_P,
+        # "frequency_penalty": APIConfig.REPETITION_PENALTY,
+        "stream": False # Assuming non-streaming for this function
+    }
+
     try:
-        headers = {
-            "Authorization": f"Bearer {APIConfig.DEEPSEEK_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        data = {
-            "model": APIConfig.DEEPSEEK_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": temperature or APIConfig.TEMPERATURE,
-            "max_tokens": max_tokens,
-        }
-        
         async with httpx.AsyncClient(timeout=APIConfig.REQUEST_TIMEOUT) as client:
             response = await client.post(
-                APIConfig.DEEPSEEK_API_URL,
+                api_url,
                 headers=headers,
                 json=data
             )
-            
+
+        # Check HTTP status code first
+        if response.status_code != 200:
+            error_message = f"Chutes.ai API 调用失败，状态码: {response.status_code}"
+            try:
+                # Try to get more details from the response body
+                error_details = response.json()
+                error_message += f" - {error_details}"
+            except Exception:
+                error_message += f" - 响应内容: {response.text}" # Fallback to raw text
+            logging.error(error_message)
+            return error_message # Return error message to caller
+
+        # Parse successful response
         response_data = response.json()
         if "choices" in response_data and len(response_data["choices"]) > 0:
-            return response_data["choices"][0]["message"]["content"].strip()
+            message = response_data["choices"][0].get("message")
+            if message:
+                content = message.get("content") # Use .get() for safety
+                if isinstance(content, str): # Check if it's a string
+                    return content.strip()
+                else:
+                    # Handle cases where content is None or not a string
+                    logging.error(f"API 响应中 content 非字符串或为 None: {content}")
+                    return "错误：API响应内容格式不正确" # Return a clear error message
+            else:
+                logging.error(f"API 响应格式错误 (缺少 message): {response_data}")
+                return "错误：API响应格式错误 (message)"
         else:
-            logging.error(f"DeepSeek API返回格式错误: {response_data}")
-            return "API返回格式错误"
-            
-    except Exception as e:
-        logging.error(f"DeepSeek API调用失败: {e}")
-        return f"API调用错误: {str(e)}"
+            logging.error(f"Chutes.ai API 响应格式错误 (缺少 choices): {response_data}")
+            return "API 响应格式错误 (choices)"
 
-async def qwen_chat(
-    prompt: str, 
-    temperature: float = None, 
-    max_tokens: int = 1024
-) -> str:
-    """调用通义千问模型API"""
-    # 已有的函数实现，保留不变
-    # ...
-    pass  # 这里应该有现有的实现代码 
+    except httpx.RequestError as e:
+        logging.error(f"请求 Chutes.ai API 时发生网络错误: {e}")
+        return f"网络请求错误: {e}"
+    except Exception as e:
+        logging.error(f"处理 Chutes.ai API 响应时发生未知错误: {e}")
+        import traceback
+        traceback.print_exc()
+        return f"处理响应时发生未知错误: {e}"
+
+# Remove or comment out the specific deepseek_chat and qwen_chat functions
+# if chat_completion now handles both.
+# async def deepseek_chat(...): ...
+# async def qwen_chat(...): ... 

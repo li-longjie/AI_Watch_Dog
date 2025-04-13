@@ -1,6 +1,6 @@
 <template>
   <div class="monitoring-page">
-    <AppHeader />
+    <!-- <AppHeader /> -->
 
     <draggable 
       v-model="panelOrder" 
@@ -13,71 +13,71 @@
       drag-class="drag-panel"
     >
       <template #item="{element}">
-        <div v-if="element.id === 1" class="panel video-panel" :style="getPanelStyle(1)" ref="panel1">
-          <VideoPanel :videoSrc="videoFeedUrl" />
+        <div v-if="element.id === 1" class="panel combined-monitor-panel" :style="getPanelStyle(1)" ref="panel1">
+          <CombinedMonitorPanel :videoSrc="videoFeedUrl" :videoWs="videoWs" :deviceWs="deviceWs" />
           <div class="resize-handle resize-e" @mousedown="startResize($event, 1, 'e')"></div>
           <div class="resize-handle resize-s" @mousedown="startResize($event, 1, 's')"></div>
           <div class="resize-handle resize-se" @mousedown="startResize($event, 1, 'se')"></div>
         </div>
-        <div v-else-if="element.id === 2" class="panel warning-panel" :style="getPanelStyle(2)" ref="panel2">
-          <WarningPanel :alertToReplay="selectedAlert" />
-          <div class="resize-handle resize-w" @mousedown="startResize($event, 2, 'w')"></div>
-          <div class="resize-handle resize-s" @mousedown="startResize($event, 2, 's')"></div>
-          <div class="resize-handle resize-sw" @mousedown="startResize($event, 2, 'sw')"></div>
-        </div>
-        <div v-else-if="element.id === 3" class="panel alerts-panel" :style="getPanelStyle(3)" ref="panel3">
-          <AlertsPanel :alerts="alerts" @view-alert="handleViewAlert" />
-          <div class="resize-handle resize-e" @mousedown="startResize($event, 3, 'e')"></div>
-          <div class="resize-handle resize-n" @mousedown="startResize($event, 3, 'n')"></div>
-          <div class="resize-handle resize-ne" @mousedown="startResize($event, 3, 'ne')"></div>
-        </div>
         <div v-else-if="element.id === 4" class="panel qa-panel" :style="getPanelStyle(4)" ref="panel4">
-          <QAPanel :messages="chatMessages" @send-message="sendChatMessage" />
+          <QAPanel />
           <div class="resize-handle resize-w" @mousedown="startResize($event, 4, 'w')"></div>
           <div class="resize-handle resize-n" @mousedown="startResize($event, 4, 'n')"></div>
           <div class="resize-handle resize-nw" @mousedown="startResize($event, 4, 'nw')"></div>
+          <div class="resize-handle resize-s" @mousedown="startResize($event, 4, 's')"></div>
+          <div class="resize-handle resize-e" @mousedown="startResize($event, 4, 'e')"></div>
+          <div class="resize-handle resize-sw" @mousedown="startResize($event, 4, 'sw')"></div>
+          <div class="resize-handle resize-se" @mousedown="startResize($event, 4, 'se')"></div>
+          <div class="resize-handle resize-ne" @mousedown="startResize($event, 4, 'ne')"></div>
+        </div>
+        <div v-else-if="element.id === 5" class="panel alert-replay-panel" :style="getPanelStyle(5)" ref="panel5">
+          <AlertReplayPanel :alerts="alerts" :wsConnection="alertsWs" />
+          <div class="resize-handle resize-e" @mousedown="startResize($event, 5, 'e')"></div>
+          <div class="resize-handle resize-n" @mousedown="startResize($event, 5, 'n')"></div>
+          <div class="resize-handle resize-ne" @mousedown="startResize($event, 5, 'ne')"></div>
+          <div class="resize-handle resize-w" @mousedown="startResize($event, 5, 'w')"></div>
+          <div class="resize-handle resize-s" @mousedown="startResize($event, 5, 's')"></div>
+          <div class="resize-handle resize-sw" @mousedown="startResize($event, 5, 'sw')"></div>
+          <div class="resize-handle resize-nw" @mousedown="startResize($event, 5, 'nw')"></div>
+          <div class="resize-handle resize-se" @mousedown="startResize($event, 5, 'se')"></div>
         </div>
       </template>
     </draggable>
 
-    <AppFooter />
+    <!-- <StatusBar /> -->
   </div>
 </template>
 
 <script setup>
 // 这里将添加页面的逻辑，例如 WebSocket 连接、数据获取等
 import { onMounted, onUnmounted, ref } from 'vue';
-import AppHeader from '../components/AppHeader.vue'; // 导入 Header
-import AppFooter from '../components/AppFooter.vue';
-import VideoPanel from '../components/VideoPanel.vue';
-import WarningPanel from '../components/WarningPanel.vue';
-import AlertsPanel from '../components/AlertsPanel.vue';
+// import AppHeader from '../components/AppHeader.vue'; // 移除 Header 导入
+// import StatusBar from '../components/AppFooter.vue'; // 移除 StatusBar 导入
+
+import CombinedMonitorPanel from '../components/CombinedMonitorPanel.vue'; // 新的组合面板
 import QAPanel from '../components/QAPanel.vue';
+import AlertReplayPanel from '../components/AlertReplayPanel.vue'; // *** 导入新组件 ***
 import draggable from 'vuedraggable';
 
 const videoFeedUrl = ref(''); // 用于存储视频流 URL
-let videoWs = null;
+let videoWs = ref(null); // 使用 ref 使得子组件可以响应式地接收 WebSocket 对象
 const alerts = ref([]); // 存储预警信息列表
-let alertsWs = null;
+let alertsWs = ref(null); // 使用 ref
+let deviceWs = ref(null); // 设备列表的WebSocket连接
 const MAX_DISPLAY_ALERTS = 50; // 前端最多显示多少条预警
-const selectedAlert = ref(null); // 用于存储当前选中的预警
-const chatMessages = ref([]); // 存储聊天消息
-let qaWs = null;
 
-// 定义面板顺序
+// 定义面板顺序 - 移除独立的设备列表面板
 const panelOrder = ref([
-  { id: 1 }, // 视频面板
-  { id: 2 }, // 预警回放面板
-  { id: 3 }, // 预警信息面板
+  { id: 1 }, // 合并的监控面板（视频+设备列表）
+  { id: 5 }, // 预警面板
   { id: 4 }  // 智能问答面板
 ]);
 
-// 添加面板大小调整相关的状态
+// 更新面板大小状态 - 移除设备列表面板
 const panelSizes = ref({
-  1: { width: '100%', height: '100%' },
-  2: { width: '100%', height: '100%' },
-  3: { width: '100%', height: '100%' },
-  4: { width: '100%', height: '100%' }
+  1: { width: '100%', height: '339.13px' }, // 调整合并面板尺寸
+  4: { width: '100%', height: '100%' },
+  5: { width: '100%', height: '100%' }
 });
 
 const resizing = ref({
@@ -92,11 +92,16 @@ const resizing = ref({
 
 // 获取面板样式
 function getPanelStyle(panelId) {
-  return {
-    width: panelSizes.value[panelId].width,
-    height: panelSizes.value[panelId].height,
-    position: 'relative'
-  };
+    // 检查 panelSizes 中是否存在该 panelId
+    if (!panelSizes.value[panelId]) {
+        console.warn(`Panel size for ID ${panelId} not found. Using default.`);
+        return { width: '100%', height: '100%', position: 'relative' };
+    }
+    return {
+        width: panelSizes.value[panelId].width,
+        height: panelSizes.value[panelId].height,
+        position: 'relative'
+    };
 }
 
 // 开始调整大小
@@ -121,6 +126,9 @@ function startResize(event, panelId, direction) {
   
   document.addEventListener('mousemove', handleResize);
   document.addEventListener('mouseup', stopResize);
+  
+  // 添加一个 class 到 panel 以禁用过渡效果
+  panel.classList.add('resizing');
 }
 
 // 处理调整大小
@@ -132,17 +140,22 @@ function handleResize(event) {
   let newWidth = startWidth;
   let newHeight = startHeight;
   
+  const deltaX = event.clientX - startX;
+  const deltaY = event.clientY - startY;
+  
   // 根据拖动方向计算新尺寸
   if (direction.includes('e')) {
-    newWidth = startWidth + (event.clientX - startX);
+    newWidth = startWidth + deltaX;
   } else if (direction.includes('w')) {
-    newWidth = startWidth - (event.clientX - startX);
+    newWidth = startWidth - deltaX;
+    console.warn("Resizing 'w'/'n' might have positioning issues with current setup.");
   }
   
   if (direction.includes('s')) {
-    newHeight = startHeight + (event.clientY - startY);
+    newHeight = startHeight + deltaY;
   } else if (direction.includes('n')) {
-    newHeight = startHeight - (event.clientY - startY);
+    newHeight = startHeight - deltaY;
+    console.warn("Resizing 'w'/'n' might have positioning issues with current setup.");
   }
   
   // 设置最小尺寸
@@ -158,6 +171,20 @@ function handleResize(event) {
 
 // 停止调整大小
 function stopResize() {
+  if (!resizing.value.active) return; // 防止重复触发
+
+  const panelId = resizing.value.panelId;
+  // 找到对应的面板元素移除 resizing class
+  // 依赖于 DOM 结构，如果结构变化需要调整选择器
+  // 使用 ID 或更具体的 class 可能更好
+  const panelElement = document.querySelector(`.panel[ref='panel${panelId}']`) || document.querySelector(`.panel.${panelId === 1 ? 'video-panel' : panelId === 4 ? 'qa-panel' : 'alert-replay-panel'}`); // 基于 ref 或 class 查找
+  if (panelElement) {
+      panelElement.classList.remove('resizing');
+  } else {
+      // 如果找不到，尝试遍历所有 panel
+      document.querySelectorAll('.panel.resizing').forEach(el => el.classList.remove('resizing'));
+  }
+
   resizing.value.active = false;
   document.removeEventListener('mousemove', handleResize);
   document.removeEventListener('mouseup', stopResize);
@@ -166,205 +193,118 @@ function stopResize() {
 // 初始化视频 WebSocket
 const initVideoWebSocket = () => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/video_feed`; // 使用相对路径，由 Vite 代理
+  const wsUrl = `${protocol}//${window.location.host}/video_feed`;
 
-  videoWs = new WebSocket(wsUrl);
+  const ws = new WebSocket(wsUrl);
 
-  videoWs.onopen = () => {
+  ws.onopen = () => {
     console.log('视频 WebSocket 已连接');
-    // 可以在状态栏显示连接状态
+    videoWs.value = ws; // 将实例赋给 ref
   };
 
-  videoWs.onmessage = (event) => {
+  ws.onmessage = (event) => {
     if (event.data instanceof Blob) {
-      // 释放之前的 URL
       if (videoFeedUrl.value && videoFeedUrl.value.startsWith('blob:')) {
         URL.revokeObjectURL(videoFeedUrl.value);
       }
-      // 创建新的 Blob URL
       videoFeedUrl.value = URL.createObjectURL(event.data);
     }
-    // 可以处理其他类型的消息，例如行为识别结果
   };
 
-  videoWs.onerror = (error) => {
+  ws.onerror = (error) => {
     console.error('视频 WebSocket 错误:', error);
+    videoWs.value = null; // 连接错误时清空 ref
   };
 
-  videoWs.onclose = () => {
+  ws.onclose = () => {
     console.log('视频 WebSocket 已关闭');
-    // 可以在状态栏显示断开状态
-    // 尝试重连 (可以添加延迟和次数限制)
-    // setTimeout(initVideoWebSocket, 5000);
+    videoWs.value = null; // 关闭时清空 ref
+    if (videoFeedUrl.value && videoFeedUrl.value.startsWith('blob:')) {
+      URL.revokeObjectURL(videoFeedUrl.value);
+      videoFeedUrl.value = '';
+    }
+    // 可以在这里添加重连逻辑
   };
 };
 
 // 关闭视频 WebSocket
 const closeVideoWebSocket = () => {
-  if (videoWs) {
-    videoWs.close();
-    videoWs = null;
-    // 释放最后的 URL
-    if (videoFeedUrl.value && videoFeedUrl.value.startsWith('blob:')) {
-      URL.revokeObjectURL(videoFeedUrl.value);
-      videoFeedUrl.value = '';
-    }
+  if (videoWs.value) {
+    videoWs.value.close();
+    videoWs.value = null;
+  }
+  if (videoFeedUrl.value && videoFeedUrl.value.startsWith('blob:')) {
+    URL.revokeObjectURL(videoFeedUrl.value);
+    videoFeedUrl.value = '';
   }
 };
 
 // 初始化预警 WebSocket
 const initAlertsWebSocket = () => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/alerts`; // 预警 WebSocket 端点
+  const wsUrl = `${protocol}//${window.location.host}/alerts`;
 
-  alertsWs = new WebSocket(wsUrl);
+  const ws = new WebSocket(wsUrl);
 
-  alertsWs.onopen = () => {
+  ws.onopen = () => {
     console.log('预警 WebSocket 已连接');
+    alertsWs.value = ws; // 将实例赋给 ref
   };
 
-  alertsWs.onmessage = (event) => {
+  ws.onmessage = (event) => {
     try {
       const alertData = JSON.parse(event.data);
       if (alertData.type === 'alert') {
         console.log('收到新预警:', alertData);
-        // 将新预警添加到列表开头
-        alerts.value.unshift(alertData);
-        // 限制列表长度
+        alerts.value.unshift(alertData); // 最新的放前面
         if (alerts.value.length > MAX_DISPLAY_ALERTS) {
-          alerts.value.pop(); // 移除最旧的预警
+          alerts.value.pop();
         }
-        // TODO: 可以在 WarningPanel 中显示最新预警的图片/视频
+      } else if (alertData.type === 'recent_alerts') {
+         // 处理首次连接时收到的历史预警
+         console.log('收到历史预警:', alertData.data.length, '条');
+         // 假设 data 是按时间顺序（旧->新）发送的，所以需要反转
+         alerts.value = [...alertData.data.reverse(), ...alerts.value];
+         // 去重和限制长度可以在这里做，或者信任后端的逻辑
+         if (alerts.value.length > MAX_DISPLAY_ALERTS) {
+             alerts.value = alerts.value.slice(0, MAX_DISPLAY_ALERTS);
+         }
       }
     } catch (error) {
       console.error('处理预警消息失败:', error);
     }
   };
 
-  alertsWs.onerror = (error) => {
+  ws.onerror = (error) => {
     console.error('预警 WebSocket 错误:', error);
+    alertsWs.value = null; // 连接错误时清空 ref
   };
 
-  alertsWs.onclose = () => {
+  ws.onclose = () => {
     console.log('预警 WebSocket 已关闭');
-    // 尝试重连
-    // setTimeout(initAlertsWebSocket, 5000);
+    alertsWs.value = null; // 关闭时清空 ref
+    // 可以在这里添加重连逻辑
   };
 };
 
 // 关闭预警 WebSocket
 const closeAlertsWebSocket = () => {
-  if (alertsWs) {
-    alertsWs.close();
-    alertsWs = null;
+  if (alertsWs.value) {
+    alertsWs.value.close();
+    alertsWs.value = null;
   }
 };
-
-// 获取历史预警
-const fetchHistoricalAlerts = async () => {
-  try {
-    // 注意：这里的路径是 /api/alerts，由 Vite 代理到后端
-    const response = await fetch('/api/alerts');
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    const data = await response.json();
-    if (data.status === 'success' && Array.isArray(data.alerts)) {
-      // 将历史预警添加到列表 (注意顺序，API 返回的是最近的)
-      // 后端 recent_alerts 是 deque，append 在右边，所以最新的在后面
-      // 为了和 WebSocket 接收到的新预警保持一致（最新的在前面），需要反转一下
-      alerts.value = data.alerts.reverse();
-      console.log('获取到历史预警:', alerts.value.length, '条');
-    } else {
-      console.error('获取历史预警失败:', data.message || '格式错误');
-    }
-  } catch (error) {
-    console.error('请求历史预警失败:', error);
-  }
-};
-
-// 初始化问答 WebSocket
-const initQWebSocket = () => {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/qa`; // 问答 WebSocket 端点
-
-  qaWs = new WebSocket(wsUrl);
-
-  qaWs.onopen = () => {
-    console.log('问答 WebSocket 已连接');
-    // 可以发送一条欢迎消息或请求初始状态
-    // qaWs.send(JSON.stringify({ type: 'status_request' }));
-    // 添加一条系统消息到聊天记录
-    chatMessages.value.push({ id: Date.now(), sender: 'system', text: '已连接到问答助手。' });
-  };
-
-  qaWs.onmessage = (event) => {
-    try {
-      const messageData = JSON.parse(event.data);
-      console.log('收到问答消息:', messageData);
-      // 假设后端返回的消息格式为 { sender: 'ai'/'system', text: '...' }
-      chatMessages.value.push({ id: Date.now(), ...messageData });
-      // TODO: 滚动聊天窗口到底部
-    } catch (error) {
-      console.error('处理问答消息失败:', error);
-      chatMessages.value.push({ id: Date.now(), sender: 'system', text: '处理消息时出错。' });
-    }
-  };
-
-  qaWs.onerror = (error) => {
-    console.error('问答 WebSocket 错误:', error);
-    chatMessages.value.push({ id: Date.now(), sender: 'system', text: '问答服务连接错误。' });
-  };
-
-  qaWs.onclose = () => {
-    console.log('问答 WebSocket 已关闭');
-    chatMessages.value.push({ id: Date.now(), sender: 'system', text: '问答服务已断开。' });
-    // 尝试重连
-    // setTimeout(initQWebSocket, 5000);
-  };
-};
-
-// 关闭问答 WebSocket
-const closeQWebSocket = () => {
-  if (qaWs) {
-    qaWs.close();
-    qaWs = null;
-  }
-};
-
-// 处理从 AlertsPanel 传来的事件
-function handleViewAlert(alert) {
-  console.log('选中预警进行回放:', alert);
-  selectedAlert.value = alert;
-}
-
-// 发送聊天消息
-function sendChatMessage(messageText) {
-  if (qaWs && qaWs.readyState === WebSocket.OPEN && messageText.trim()) {
-    const message = { type: 'question', content: messageText.trim() };
-    qaWs.send(JSON.stringify(message));
-    // 将用户消息添加到聊天记录
-    chatMessages.value.push({ id: Date.now(), sender: 'user', text: messageText.trim() });
-    // TODO: 滚动聊天窗口到底部
-  } else {
-    console.error('无法发送消息：WebSocket 未连接或消息为空');
-    chatMessages.value.push({ id: Date.now(), sender: 'system', text: '无法发送消息，请检查连接。' });
-  }
-}
 
 onMounted(() => {
   console.log('主监控页面已挂载');
-  initVideoWebSocket(); // 页面加载时连接视频 WS
-  initAlertsWebSocket(); // 页面加载时连接预警 WS
-  fetchHistoricalAlerts(); // 页面加载时获取历史预警
-  initQWebSocket(); // 页面加载时连接问答 WS
+  initVideoWebSocket();
+  initAlertsWebSocket();
 });
 
 onUnmounted(() => {
   console.log('主监控页面已卸载');
-  closeVideoWebSocket(); // 页面卸载时关闭视频 WS
-  closeAlertsWebSocket(); // 页面卸载时关闭预警 WS
-  closeQWebSocket(); // 页面卸载时关闭问答 WS
+  closeVideoWebSocket();
+  closeAlertsWebSocket();
   document.removeEventListener('mousemove', handleResize);
   document.removeEventListener('mouseup', stopResize);
 });
@@ -374,79 +314,119 @@ onUnmounted(() => {
 .monitoring-page {
   display: flex;
   flex-direction: column;
-  min-height: 100vh; /* 确保至少占满整个视口高度 */
+  min-height: 100vh;
   background-color: var(--dark-bg);
-  width: 100vw; /* 占满整个视口宽度 */
-  overflow-x: hidden; /* 防止水平滚动条 */
+  width: 100vw;
+  overflow-x: hidden;
+  /* 移除垂直居中，让内容从顶部开始 */
+  /* justify-content: center; */
+  /* 确保没有边距和内边距导致的空白 */
+  margin: 0;
+  padding: 0;
 }
 
 .container {
+  /* 恢复grid布局 */
   display: grid;
-  grid-template-columns: repeat(2, 1fr); /* 2列布局 */
-  grid-template-rows: repeat(2, calc(45vh - 60px)); /* 减小高度，留出更多间距 */
-  gap: 50px; /* 进一步增加面板之间的间距 */
-  padding: 40px 60px 60px 60px; /* 增加四周内边距 */
-  flex: 1; /* 让容器占据剩余空间 */
-  max-width: 100%; /* 移除最大宽度限制，占满整个宽度 */
-  width: 100%; /* 占满可用宽度 */
-  margin: 0; /* 移除外边距 */
-  box-sizing: border-box; /* 确保内边距不会增加总宽度 */
-  position: relative; /* 添加相对定位 */
-  overflow: visible; /* 允许面板溢出 */
+  /* 宽度缩减并居中 */
+  width: 90%;
+  max-width: 1600px;
+  margin: 0 auto;
+  /* 比例保持不变，但调整格式添加空列作为间距 */
+  grid-template-columns: 2fr 40px 1fr;
+  /* 调整高度，确保一屏内完全显示 */
+  grid-template-rows: 40vh 40vh;
+  gap: 20px;
+  grid-template-areas:
+    "monitor .     qa"
+    "alert   .     qa";
+  /* 内边距适当缩减 */
+  padding: 10px 0;
+  box-sizing: border-box;
+}
+
+/* 定义网格区域 */
+.combined-monitor-panel { grid-area: monitor; }
+.alert-replay-panel { grid-area: alert; }
+.qa-panel { 
+  grid-area: qa;
+}
+
+/* 响应式调整 */
+@media (max-width: 900px) {
+  .container {
+    width: 95%;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    grid-template-areas:
+      "monitor"
+      "alert"
+      "qa";
+    gap: 15px;
+  }
+  
+  .panel {
+    max-height: 50vh;
+  }
 }
 
 .panel {
-  background-color: rgba(23, 42, 69, 0.7); /* 半透明背景 */
-  backdrop-filter: blur(10px); /* 毛玻璃效果 */
-  -webkit-backdrop-filter: blur(10px); /* Safari 支持 */
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(79, 209, 197, 0.2);
+  background-color: rgba(15, 23, 42, 0.75); /* Slightly less transparent */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 6px; /* Slightly smaller radius */
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(79, 209, 197, 0.15);
   padding: 15px;
   display: flex;
   flex-direction: column;
-  position: relative; /* 为伪元素定位 */
-  overflow: hidden; /* 隐藏溢出的内容 */
-  height: 100%; /* 占满网格单元格高度 */
-  max-height: calc(45vh - 60px); /* 调整最大高度限制 */
-  transition: transform 0.3s ease, box-shadow 0.3s ease;
-  cursor: pointer;
-  border: 1px solid rgba(79, 209, 197, 0.2); /* 添加细边框 */
-  transform: scale(0.98); /* 默认稍微缩小，增加分离感 */
-  min-width: 200px; /* 最小宽度 */
-  min-height: 150px; /* 最小高度 */
-  resize: both; /* 原生调整大小功能（可选） */
-  overflow: auto; /* 内容溢出时显示滚动条 */
+  position: relative;
+  overflow: hidden; /* 保持隐藏，手柄使用 z-index */
+  height: 100%; /* 默认占满单元格 */
+  width: 100%; /* 默认占满单元格 */
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  border: 1px solid rgba(79, 209, 197, 0.1); /* Subtler border */
+  min-width: 200px;
+  min-height: 150px;
 }
 
 .panel:hover {
-  transform: translateY(-8px) scale(1.02); /* 悬停时上移更多 */
-  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(79, 209, 197, 0.4);
-  border-color: rgba(79, 209, 197, 0.5);
-  z-index: 10;
-}
-
-.panel:active {
-  transform: translateY(-2px) scale(1.01);
-  transition: transform 0.1s ease;
+  transform: translateY(-5px) scale(1.01); /* Subtler hover effect */
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3), 0 0 15px rgba(79, 209, 197, 0.3);
+  border-color: rgba(79, 209, 197, 0.4);
+  z-index: 10; /* Bring panel to front on hover */
 }
 
 .panel-title {
   font-size: 1.1rem;
   font-weight: 600;
-  margin-bottom: 15px;
+  margin: -15px -15px 15px -15px; /* Extend to edges */
+  padding: 10px 15px; /* Adjust padding */
   color: var(--primary, #4fd1c5);
-  border-bottom: 1px solid rgba(79, 209, 197, 0.5);
-  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(79, 209, 197, 0.3); /* Lighter border */
   display: flex;
-  justify-content: space-between;
   align-items: center;
   letter-spacing: 1px;
   text-shadow: 0 0 5px rgba(79, 209, 197, 0.3);
   cursor: move;
-  user-select: none; /* 防止文本选择干扰拖拽 */
+  user-select: none;
+  background-color: rgba(10, 25, 47, 0.5); /* Add slight background to title */
+  border-radius: 6px 6px 0 0; /* Match panel radius */
+  flex-shrink: 0; /* Prevent shrinking */
 }
 
-/* 迁移 main.css 中的面板发光和角落装饰效果 */
+.panel-title::before {
+  content: "⋮⋮";
+  margin-right: 10px; /* More space */
+  opacity: 0.6;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.5); /* Make handle more visible */
+}
+.panel-title:hover::before {
+  opacity: 1;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* Top glow effect */
 .panel::before {
   content: "";
   position: absolute;
@@ -454,92 +434,29 @@ onUnmounted(() => {
   left: 0;
   width: 100%;
   height: 3px;
-  background: linear-gradient(90deg, transparent, rgba(79, 209, 197, 0.7), transparent);
-  opacity: 0.7;
+  background: linear-gradient(90deg, transparent, rgba(79, 209, 197, 0.6), transparent);
+  opacity: 0.6; /* Slightly dimmer */
   z-index: 3;
 }
+/* Specific glow colors remain */
+.combined-monitor-panel::before { background: linear-gradient(90deg, transparent, rgba(79, 209, 197, 0.6), transparent); }
+.qa-panel::before { background: linear-gradient(90deg, transparent, rgba(128, 90, 213, 0.6), transparent); }
+/* New combined panel glow */
+.alert-replay-panel::before { background: linear-gradient(90deg, transparent, rgba(255, 165, 0, 0.6), transparent); } /* Example: Orange glow */
 
-/* 为每个面板添加不同的顶部装饰线颜色 */
-.video-panel::before {
-  background: linear-gradient(90deg, transparent, rgba(79, 209, 197, 0.7), transparent);
-}
-
-.warning-panel::before {
-  background: linear-gradient(90deg, transparent, rgba(255, 76, 76, 0.7), transparent);
-}
-
-.alerts-panel::before {
-  background: linear-gradient(90deg, transparent, rgba(255, 204, 0, 0.7), transparent);
-}
-
-.qa-panel::before {
-  background: linear-gradient(90deg, transparent, rgba(128, 90, 213, 0.7), transparent);
+/* Panel content areas */
+.panel > div:not(.panel-title):not(.resize-handle) {
+  flex-grow: 1; /* Allow content div to grow */
+  overflow: hidden; /* Let children handle scroll */
+  border-radius: 0 0 6px 6px; /* Radius for content area below title */
 }
 
-/* 面板内容区域样式 */
-.video-container, .warning-content, .alerts-list-container, .qa-content {
-  max-height: calc(100% - 40px); /* 减去标题和内边距的高度 */
-  overflow: auto; /* 内容过多时显示滚动条 */
-  background-color: rgba(10, 25, 47, 0.3); /* 半透明背景 */
-  border-radius: 6px;
-  padding: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
+/* Adjust specific panel spans/borders if needed (grid-area handles layout) */
+.combined-monitor-panel { border-color: rgba(79, 209, 197, 0.2); }
+.alert-replay-panel { border-color: rgba(255, 165, 0, 0.2); } /* Orange border */
+.qa-panel { border-color: rgba(128, 90, 213, 0.2); }
 
-/* 视频面板特定样式 */
-.video-panel .video-container {
-  max-height: calc(100% - 40px); /* 减去标题和内边距的高度 */
-  overflow: hidden; /* 视频面板不需要滚动 */
-}
-
-/* 预警回放面板特定样式 */
-.warning-panel .warning-content {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-/* 预警信息面板特定样式 */
-.alerts-panel .alerts-list-container {
-  max-height: calc(100% - 40px); /* 减去标题和内边距的高度 */
-}
-
-/* 智能问答面板特定样式 */
-.qa-panel .chat-history {
-  max-height: calc(100% - 100px); /* 减去标题、输入框和内边距的高度 */
-}
-
-/* 为特定面板添加 grid span (可选，用于调整布局) */
-.video-panel {
-  grid-column: span 1;
-  grid-row: span 1;
-  border-top: 2px solid rgba(79, 209, 197, 0.7);
-  border-left: 2px solid rgba(79, 209, 197, 0.7);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 15px rgba(79, 209, 197, 0.2);
-}
-.warning-panel {
-  grid-column: span 1;
-  grid-row: span 1;
-  border-top: 2px solid rgba(255, 76, 76, 0.7);
-  border-right: 2px solid rgba(255, 76, 76, 0.7);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 15px rgba(255, 76, 76, 0.2);
-}
-.alerts-panel {
-  grid-column: span 1;
-  grid-row: span 1;
-  border-bottom: 2px solid rgba(255, 204, 0, 0.7);
-  border-left: 2px solid rgba(255, 204, 0, 0.7);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 15px rgba(255, 204, 0, 0.2);
-}
-.qa-panel {
-  grid-column: span 1;
-  grid-row: span 1;
-  border-bottom: 2px solid rgba(128, 90, 213, 0.7);
-  border-right: 2px solid rgba(128, 90, 213, 0.7);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 15px rgba(128, 90, 213, 0.2);
-}
-
-/* 添加全局背景网格效果 */
+/* Background grid and scanline remain the same */
 .monitoring-page::before {
   content: "";
   position: fixed;
@@ -552,11 +469,9 @@ onUnmounted(() => {
       repeating-linear-gradient(transparent, transparent 50px, rgba(79, 209, 197, 0.1) 50px, rgba(79, 209, 197, 0.1) 51px),
       repeating-linear-gradient(90deg, transparent, transparent 50px, rgba(79, 209, 197, 0.1) 50px, rgba(79, 209, 197, 0.1) 51px);
   z-index: -1;
-  opacity: 0.6; /* 增强背景网格对比度 */
+  opacity: 0.5;
   pointer-events: none;
 }
-
-/* 赛博动态扫描线 */
 .monitoring-page::after {
   content: "";
   position: fixed;
@@ -568,7 +483,7 @@ onUnmounted(() => {
   box-shadow: 0 0 15px 2px var(--cyber-neon);
   z-index: 999;
   animation: scanline 8s linear infinite;
-  opacity: 0.6;
+  opacity: 0.5;
 }
 
 @keyframes scanline {
@@ -576,221 +491,56 @@ onUnmounted(() => {
   100% { top: 100vh; }
 }
 
-/* 响应式调整 */
-@media (max-width: 900px) {
-  .container {
-    grid-template-columns: 1fr; /* 小屏幕下单列 */
-    grid-template-rows: auto; /* 自动调整行高 */
-  }
-  
-  .video-panel, .warning-panel, .alerts-panel, .qa-panel {
-    grid-column: span 1;
-    grid-row: auto;
-  }
-}
+/* Draggable styles remain the same */
+.ghost-panel { opacity: 0.5; background: rgba(0, 0, 0, 0.2) !important; }
+.chosen-panel { box-shadow: 0 0 20px rgba(79, 209, 197, 0.6) !important; z-index: 20; }
+.drag-panel { transform: rotate(1deg) scale(1.03); z-index: 30; }
 
-/* 修改 App.vue 中的样式，确保内容可以铺满 */
-:deep(#app-container) {
-  max-width: 100%;
-  padding: 0;
-  margin: 0;
-  width: 100vw;
-}
-
-:deep(main) {
-  padding: 0;
-  margin: 0;
-  width: 100%;
-}
-
-/* 面板悬停时的内部元素效果 */
-.panel:hover .panel-title {
-  color: #fff;
-  text-shadow: 0 0 8px rgba(79, 209, 197, 0.8);
-}
-
-/* 面板悬停时的装饰效果增强 */
-.panel:hover::before {
-  animation-duration: 3s; /* 加快动画速度 */
-}
-
-.panel:hover::after {
-  opacity: 1;
-  transform: scale(1.2);
-}
-
-/* 视频面板特殊效果 */
-.video-panel:hover .corner-decoration {
-  opacity: 1;
-  border-color: #fff;
-  box-shadow: 0 0 10px rgba(79, 209, 197, 0.5);
-}
-
-/* 预警回放面板特殊效果 */
-.warning-panel:hover .tech-decoration {
-  opacity: 0.8;
-  border-width: 2px;
-}
-
-/* 预警信息面板特殊效果 */
-.alerts-panel:hover .data-stream-decoration {
-  opacity: 0.8;
-  width: 3px;
-}
-
-/* 智能问答面板特殊效果 */
-.qa-panel:hover .qa-glow {
-  opacity: 0.9;
-  filter: blur(3px);
-}
-
-/* 悬停时的阴影效果 */
-.video-panel:hover {
-  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4), 0 0 25px rgba(79, 209, 197, 0.4);
-}
-
-.warning-panel:hover {
-  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4), 0 0 25px rgba(255, 76, 76, 0.4);
-}
-
-.alerts-panel:hover {
-  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4), 0 0 25px rgba(255, 204, 0, 0.4);
-}
-
-.qa-panel:hover {
-  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4), 0 0 25px rgba(128, 90, 213, 0.4);
-}
-
-/* 拖拽相关样式 */
-.ghost-panel {
-  opacity: 0.5;
-  background: rgba(0, 0, 0, 0.2) !important;
-}
-
-.chosen-panel {
-  box-shadow: 0 0 20px rgba(79, 209, 197, 0.6) !important;
-  z-index: 20;
-}
-
-.drag-panel {
-  transform: rotate(2deg) scale(1.05);
-  z-index: 30;
-}
-
-/* 添加拖拽手柄样式 */
-.panel-title {
-  cursor: move;
-  user-select: none; /* 防止文本选择干扰拖拽 */
-}
-
-/* 添加拖拽提示 */
-.panel-title::before {
-  content: "⋮⋮";
-  margin-right: 8px;
-  opacity: 0.5;
-  font-size: 14px;
-}
-
-.panel-title:hover::before {
-  opacity: 1;
-}
-
-/* 调整大小的控制点样式 */
+/* Resize Handle Styles */
 .resize-handle {
   position: absolute;
-  background-color: rgba(79, 209, 197, 0.2);
-  z-index: 10;
+  background-color: transparent; /* Make invisible by default */
+  z-index: 15; /* Above panel content, below hover effects? */
+  transition: background-color 0.2s ease;
+}
+
+.panel:hover .resize-handle {
+   /* Show handles only on panel hover */
+   /* background-color: rgba(79, 209, 197, 0.1); */ /* Very subtle */
 }
 
 .resize-handle:hover {
-  background-color: rgba(79, 209, 197, 0.5);
+  background-color: rgba(79, 209, 197, 0.4); /* Highlight on handle hover */
 }
 
-/* 东西南北方向的控制点 */
-.resize-e {
-  top: 0;
-  right: 0;
-  width: 5px;
-  height: 100%;
-  cursor: e-resize;
-}
+/* Directions */
+.resize-e { top: 0; right: -2px; width: 8px; height: 100%; cursor: e-resize; }
+.resize-w { top: 0; left: -2px; width: 8px; height: 100%; cursor: w-resize; }
+.resize-s { bottom: -2px; left: 0; width: 100%; height: 8px; cursor: s-resize; }
+.resize-n { top: -2px; left: 0; width: 100%; height: 8px; cursor: n-resize; }
 
-.resize-w {
-  top: 0;
-  left: 0;
-  width: 5px;
-  height: 100%;
-  cursor: w-resize;
-}
+/* Corners */
+.resize-se { bottom: -2px; right: -2px; width: 12px; height: 12px; cursor: se-resize; border-radius: 0 0 4px 0; }
+.resize-sw { bottom: -2px; left: -2px; width: 12px; height: 12px; cursor: sw-resize; border-radius: 0 0 0 4px; }
+.resize-ne { top: -2px; right: -2px; width: 12px; height: 12px; cursor: ne-resize; border-radius: 0 4px 0 0; }
+.resize-nw { top: -2px; left: -2px; width: 12px; height: 12px; cursor: nw-resize; border-radius: 4px 0 0 0; }
 
-.resize-s {
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 5px;
-  cursor: s-resize;
-}
-
-.resize-n {
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 5px;
-  cursor: n-resize;
-}
-
-/* 角落的控制点 */
-.resize-se {
-  bottom: 0;
-  right: 0;
-  width: 15px;
-  height: 15px;
-  cursor: se-resize;
-  border-radius: 0 0 5px 0;
-}
-
-.resize-sw {
-  bottom: 0;
-  left: 0;
-  width: 15px;
-  height: 15px;
-  cursor: sw-resize;
-  border-radius: 0 0 0 5px;
-}
-
-.resize-ne {
-  top: 0;
-  right: 0;
-  width: 15px;
-  height: 15px;
-  cursor: ne-resize;
-  border-radius: 0 5px 0 0;
-}
-
-.resize-nw {
-  top: 0;
-  left: 0;
-  width: 15px;
-  height: 15px;
-  cursor: nw-resize;
-  border-radius: 5px 0 0 0;
-}
-
-/* 当正在调整大小时，禁用面板的过渡效果 */
+/* Resizing state */
 .panel.resizing {
   transition: none !important;
+  user-select: none; /* Prevent text selection during resize */
+  /* Optionally add a visual indicator */
+  /* box-shadow: 0 0 0 2px rgba(79, 209, 197, 0.5) inset !important; */
 }
 
-/* 当正在调整大小时，显示辅助线 */
-.panel.resizing::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  border: 2px dashed rgba(79, 209, 197, 0.7);
-  pointer-events: none;
-  z-index: 5;
+/* Global disable pointer events on panel content during resize */
+.panel.resizing > *:not(.panel-title):not(.resize-handle) {
+    pointer-events: none;
+}
+
+/* 修改AppHeader组件相关样式，如果存在的话 */
+:deep(.header) {
+  margin: 0;
+  padding: 0;
 }
 </style> 

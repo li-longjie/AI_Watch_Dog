@@ -124,11 +124,30 @@ async def video_feed(websocket: WebSocket):
 async def alerts(websocket: WebSocket):
     await websocket.accept()
     active_connections.append(websocket)
+    
+    # 为每个连接维护一个已发送预警ID集合
+    connection_sent_alerts = set()
+    
     try:
-        # 发送已有的预警
+        # 发送已有的预警，但确保不重复
         if recent_alerts:
             for alert in recent_alerts:
-                await websocket.send_json(alert)
+                # 提取预警的唯一标识
+                alert_key = alert.get("alert_key")
+                if not alert_key:
+                    # 如果没有alert_key，根据内容和时间戳生成一个更可靠的后备key
+                    timestamp = alert.get("timestamp", "")
+                    content = alert.get("content", "")
+                    # 移除可能为空的 start/end time，避免它们引起不一致
+                    alert_key = f"{content}_{timestamp}"
+                
+                if alert_key not in connection_sent_alerts:
+                    await websocket.send_json(alert)
+                    connection_sent_alerts.add(alert_key)
+                    
+                    # 限制sent_alerts大小
+                    if len(connection_sent_alerts) > 100:
+                        connection_sent_alerts = set(list(connection_sent_alerts)[-100:])
         
         # 保持连接
         while True:
@@ -203,14 +222,48 @@ async def test_alert():
 
 async def alert_handler():
     """处理警报消息"""
+    # 用于跟踪已处理的预警
+    processed_alerts = set()
+    
     while True:
         try:
             # 检查预警队列
             if hasattr(video_processor, 'alert_queue') and not video_processor.alert_queue.empty():
                 try:
                     alert = video_processor.alert_queue.get_nowait()
-                    # 添加到最近预警 (deque 自动处理)
-                    recent_alerts.append(alert)
+                    
+                    # 提取预警的唯一标识
+                    alert_key = alert.get("alert_key")
+                    if not alert_key:
+                        # 如果没有alert_key，根据内容和时间戳生成一个更可靠的后备key
+                        timestamp = alert.get("timestamp", "")
+                        content = alert.get("content", "")
+                        # 移除可能为空的 start/end time，避免它们引起不一致
+                        alert_key = f"{content}_{timestamp}"
+                    
+                    # 检查是否已经处理过这个预警
+                    if alert_key in processed_alerts:
+                        logging.info(f"预警已处理，跳过: {alert_key}")
+                        continue  # 跳过已处理的预警
+                    
+                    # 标记此预警已处理
+                    processed_alerts.add(alert_key)
+                    
+                    # 限制processed_alerts的大小，避免内存无限增长
+                    if len(processed_alerts) > 100:  # 保留最近100个预警记录
+                        processed_alerts = set(list(processed_alerts)[-100:])
+                    
+                    # 检查recent_alerts中是否已存在相同预警，避免重复添加
+                    duplicate = False
+                    for existing_alert in recent_alerts:
+                        existing_key = existing_alert.get("alert_key")
+                        if existing_key and existing_key == alert_key:
+                            duplicate = True
+                            break
+                    
+                    if not duplicate:
+                        # 添加到最近预警 (deque 自动处理)
+                        recent_alerts.append(alert)
                     
                     # 实时发送给所有连接
                     disconnected = []

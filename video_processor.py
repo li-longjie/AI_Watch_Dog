@@ -11,7 +11,9 @@ import os
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 from multi_modal_analyzer import MultiModalAnalyzer
-from config import VideoConfig
+from config import VideoConfig, OSSConfig, RAGConfig
+import oss2
+from utility import frames_to_video_oss
 
 
 class VideoProcessor:
@@ -64,9 +66,14 @@ class VideoProcessor:
 
         self.start_push_queue = 0
 
-        # 添加行为检测相关属性
-        self.last_behavior_time = 0
-        self.behavior_interval = 2.0  # 每2秒检测一次行为，可调整
+        # 添加活动追踪相关属性
+        self.current_activity = None  # 当前正在进行的活动
+        self.activity_start_time = None  # 活动开始时间
+        self.last_activity_time = None  # 最后一次检测到活动的时间
+        self.activity_threshold = 10  # 活动结束判定阈值（秒）
+        
+        # 添加已发送预警的跟踪集合，用于去重
+        self.sent_alerts = set()
 
     async def start_processing(self):
         """启动处理"""
@@ -128,23 +135,6 @@ class VideoProcessor:
                         self.analysis_timestamps = self.analysis_timestamps[-max_frames:]
                     last_analysis_update = current_time
 
-                # 实时行为检测
-                if current_time - self.last_behavior_time >= self.behavior_interval:
-                    behavior_result = self._detect_behavior(frame)
-                    if behavior_result:
-                        alert = {
-                            "type": "behavior",
-                            "timestamp": datetime.now().strftime('%Y年%m月%d日%H点%M分'),
-                            "content": f"检测到行为: {behavior_result['behavior']}",
-                            "level": "info",
-                            "details": behavior_result.get("details", ""),
-                            "image_url": f"/video_warning/behavior_{int(current_time)}.jpg"
-                        }
-                        # 保存行为检测帧
-                        cv2.imwrite(f"video_warning/behavior_{int(current_time)}.jpg", frame)
-                        self.alert_queue.put(alert)
-                        self.last_behavior_time = current_time
-
                 # 触发异常分析
                 if current_time - self.last_analysis >= VideoConfig.ANALYSIS_INTERVAL and not self.processing:
                     if len(self.analysis_frames) >= 2:
@@ -177,49 +167,6 @@ class VideoProcessor:
                 logging.error(f"视频处理错误: {e}")
                 time.sleep(0.1)
 
-    def _detect_behavior(self, frame: np.ndarray) -> Optional[Dict[str, str]]:
-        """
-        改进的行为检测逻辑
-        返回行为代码：
-        1: 专注工作
-        2: 吃东西
-        3: 喝水
-        4: 喝饮料
-        5: 玩手机
-        6: 睡觉
-        7: 其他
-        """
-        try:
-            if not hasattr(self, '_prev_frame'):
-                self._prev_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                return None
-
-            current_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            
-            # 计算帧差
-            diff = cv2.absdiff(self._prev_frame, current_frame)
-            thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)[1]
-            motion_ratio = np.count_nonzero(thresh) / thresh.size
-            
-            # 更新前一帧
-            self._prev_frame = current_frame
-
-            # 基于运动程度进行行为分类
-            if motion_ratio < 0.01:  # 几乎无运动
-                return {"behavior": "6", "details": "检测到睡觉行为"}
-            elif motion_ratio < 0.03:  # 轻微运动
-                return {"behavior": "1", "details": "检测到专注工作"}
-            elif motion_ratio < 0.05:  # 中等运动
-                return {"behavior": "3", "details": "检测到喝水行为"}
-            elif motion_ratio < 0.08:  # 较大运动
-                return {"behavior": "2", "details": "检测到吃东西行为"}
-            else:  # 剧烈运动
-                return {"behavior": "7", "details": "检测到其他行为"}
-
-        except Exception as e:
-            logging.error(f"行为检测错误: {e}")
-            return {"behavior": "7", "details": "行为检测出错"}
-
     def _run_analysis(self, frames, timestamps):
         """在单独的线程中运行异常分析"""
         try:
@@ -233,24 +180,118 @@ class VideoProcessor:
                 self.analyzer.analyze(frames, self.fps, (timestamps[0], timestamps[-1]))
             )
 
-            if isinstance(result, dict) and result.get("type") in ["important", "warning"]:
-                print(f"分析结果: {result}")
-                output_filename = f"video_warning/alert_{int(time.time())}.jpg"
-                cv2.imwrite(output_filename, frames[-1])
+            current_time = datetime.now()
+            
+            # 定义允许触发预警的活动类型
+            allowed_activities = {
+                "睡觉", "玩手机", "喝饮料", "喝水", "吃东西", "专注工作学习",
+                "发现明火", "人员聚集", "打架斗殴"
+            }
 
-                alert_content = result["alert"] if isinstance(result["alert"], str) else str(result["alert"])
-                alert = {
-                    "type": "alert",
-                    "timestamp": datetime.now().strftime('%Y年%m月%d日%H点%M分'),
-                    "content": alert_content,
-                    "level": result.get("type", "normal"),
-                    "details": result.get("details", ""),
-                    "image_url": f"/{output_filename}"
-                }
-                self.alert_queue.put(alert)
-                print(f"已添加预警到队列: {alert_content}")
-            else:
-                print(f"未检测到需要预警的情况")
+            # 如果结果是字符串且不是"正常"
+            if isinstance(result, str) and result and result != "正常":
+                # 尝试从结果中提取行为 (假设格式为 "时间 情况")
+                parts = result.split()
+                behavior = parts[-1] if len(parts) > 1 else result # 获取最后一个词作为行为
+                
+                # 检查提取的行为是否在允许列表中
+                if behavior in allowed_activities:
+                    logging.info(f"检测到允许的活动: {behavior}")
+                    
+                    # --- 活动持续时间逻辑开始 ---
+                    if self.current_activity is None:
+                        # 新活动开始
+                        self.current_activity = behavior
+                        self.activity_start_time = current_time
+                        self.last_activity_time = current_time
+                        
+                        # 创建初始预警
+                        alert_key = f"{behavior}_开始_{current_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                        logging.info(f"尝试生成预警，Key: {alert_key}, 当前 sent_alerts 数量: {len(self.sent_alerts)}")
+                        
+                        if alert_key not in self.sent_alerts:
+                            self.sent_alerts.add(alert_key)
+                            logging.info(f"添加 Key 到 sent_alerts: {alert_key}")
+                            
+                            alert_id = int(time.time())
+                            image_url = self.upload_to_oss(frames[-1], f"{OSSConfig.ALERT_PREFIX}alert_{alert_id}.jpg")
+                            video_url = frames_to_video_oss(frames, self.fps, timestamps, alert_id=alert_id)
+                            
+                            alert = {
+                                "type": "alert",
+                                "timestamp": current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                                "content": behavior, # 只存储行为本身
+                                "start_time": current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                                "level": "important", # 初始默认为 important
+                                "image_url": image_url,
+                                "video_url": video_url,
+                                "alert_key": alert_key,
+                                "activity_id": f"{behavior}_{int(self.activity_start_time.timestamp())}" # 活动唯一ID
+                            }
+                            # 如果是专注工作，级别改为 normal
+                            if behavior == "专注工作学习":
+                                alert["level"] = "normal"
+                                
+                            self.alert_queue.put(alert)
+                            self._run_async_task(self._add_to_vector_db(alert, alert["timestamp"]))
+                        else:
+                            logging.info(f"预警已存在，不重复发送: {alert_key}")
+                        
+                    elif self.current_activity == behavior:
+                        # 更新最后活动时间
+                        self.last_activity_time = current_time
+                    
+                    elif self.current_activity != behavior:
+                        # 活动变化，结束当前活动
+                        self._end_current_activity(frames, timestamps)
+                        
+                        # 开始新活动
+                        self.current_activity = behavior
+                        self.activity_start_time = current_time
+                        self.last_activity_time = current_time
+                        
+                        # 创建新活动预警
+                        alert_key = f"{behavior}_开始_{current_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                        logging.info(f"尝试生成新活动预警，Key: {alert_key}, 当前 sent_alerts 数量: {len(self.sent_alerts)}")
+                        
+                        if alert_key not in self.sent_alerts:
+                            self.sent_alerts.add(alert_key)
+                            logging.info(f"添加 Key 到 sent_alerts: {alert_key}")
+                        
+                            alert_id = int(time.time())
+                            image_url = self.upload_to_oss(frames[-1], f"{OSSConfig.ALERT_PREFIX}alert_{alert_id}.jpg")
+                            video_url = frames_to_video_oss(frames, self.fps, timestamps, alert_id=alert_id)
+                            
+                            alert = {
+                                "type": "alert",
+                                "timestamp": current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                                "content": behavior, # 只存储行为本身
+                                "start_time": current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                                "level": "important", # 初始默认为 important
+                                "image_url": image_url,
+                                "video_url": video_url,
+                                "alert_key": alert_key,
+                                "activity_id": f"{behavior}_{int(self.activity_start_time.timestamp())}" # 活动唯一ID
+                            }
+                             # 如果是专注工作，级别改为 normal
+                            if behavior == "专注工作学习":
+                                alert["level"] = "normal"
+                                
+                            self.alert_queue.put(alert)
+                            self._run_async_task(self._add_to_vector_db(alert, alert["timestamp"]))
+                        else:
+                            logging.info(f"预警已存在，不重复发送: {alert_key}")
+                    # --- 活动持续时间逻辑结束 ---
+
+                else:
+                    # 如果检测到的行为不在允许列表中，记录日志但不生成预警
+                    logging.info(f"检测到非预警活动: {behavior} (原始结果: {result})，不生成预警。")
+
+            elif self.current_activity is not None:
+                # 检查是否需要结束当前活动 (即使当前检测为'正常'或非允许活动)
+                if (current_time - self.last_activity_time).total_seconds() > self.activity_threshold:
+                    logging.info(f"活动 '{self.current_activity}' 超时，准备结束。")
+                    self._end_current_activity(frames, timestamps)
 
             loop.close()
 
@@ -260,6 +301,85 @@ class VideoProcessor:
             traceback.print_exc()
         finally:
             self.processing = False
+
+    def _run_async_task(self, coro):
+        """在合适的事件循环中运行异步任务"""
+        try:
+            # 如果有活动的事件循环，则使用它
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(coro)
+            else:
+                # 否则直接运行协程
+                loop.run_until_complete(coro)
+        except RuntimeError:
+            # 如果没有事件循环，创建一个新的
+            logging.info("创建新的事件循环处理异步任务")
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                new_loop.run_until_complete(coro)
+            finally:
+                new_loop.close()
+                
+    def _end_current_activity(self, frames, timestamps):
+        """结束当前活动并发送持续时间预警"""
+        if self.current_activity and self.activity_start_time:
+            end_time = self.last_activity_time or datetime.now()
+            duration = (end_time - self.activity_start_time).total_seconds()
+            duration_minutes = round(duration / 60, 1) # 保留一位小数
+
+            # 定义允许触发预警的活动类型 (与 _run_analysis 一致)
+            allowed_activities = {
+                "睡觉", "玩手机", "喝饮料", "喝水", "吃东西", "专注工作学习",
+                "发现明火", "人员聚集", "打架斗殴"
+            }
+
+            # 只有当活动类型在允许列表内，且持续时间超过阈值(例如0.1分钟)才发送结束预警
+            if self.current_activity in allowed_activities and duration_minutes >= 0.1:
+                alert_key = f"{self.current_activity}_{self.activity_start_time.strftime('%Y-%m-%d %H:%M:%S')}_{end_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                logging.info(f"尝试生成结束预警，Key: {alert_key}, 当前 sent_alerts 数量: {len(self.sent_alerts)}")
+
+                if alert_key not in self.sent_alerts:
+                    self.sent_alerts.add(alert_key)
+                    logging.info(f"添加 Key 到 sent_alerts: {alert_key}")
+
+                    alert_id = int(time.time())
+                    # 避免重复上传，可以选择只上传最后一张图片，或者不上传
+                    # image_url = self.upload_to_oss(frames[-1], f"{OSSConfig.ALERT_PREFIX}alert_{alert_id}.jpg")
+                    # video_url = frames_to_video_oss(frames, self.fps, timestamps, alert_id=alert_id)
+                    # 简化结束预警，可能不需要图片和视频
+                    image_url = None
+                    video_url = None
+
+
+                    alert = {
+                        "type": "alert",
+                        "timestamp": end_time.strftime('%Y-%m-%d %H:%M:%S'),
+                        "content": f"{self.current_activity}结束", # 更简洁的内容
+                        "start_time": self.activity_start_time.strftime('%Y-%m-%d %H:%M:%S'),
+                        "end_time": end_time.strftime('%Y-%m-%d %H:%M:%S'),
+                        "duration_minutes": duration_minutes,
+                        "level": "normal", # 结束预警通常为 normal
+                        "image_url": image_url,
+                        "video_url": video_url,
+                        "alert_key": alert_key,
+                        "activity_id": f"{self.current_activity}_{int(self.activity_start_time.timestamp())}" # 活动唯一ID
+                    }
+                    self.alert_queue.put(alert)
+                    # 结束预警通常不需要存入向量数据库，因为它只是对开始预警的补充
+                    # self._run_async_task(self._add_to_vector_db(alert, alert["timestamp"]))
+                else:
+                    logging.info(f"预警已存在，不重复发送: {alert_key}")
+            else:
+                 logging.info(f"活动 '{self.current_activity}' 不在允许列表或持续时间 ({duration_minutes} 分钟) 过短，不发送结束预警。")
+
+
+            # 重置活动追踪状态
+            logging.info(f"重置活动追踪状态，原活动: {self.current_activity}")
+            self.current_activity = None
+            self.activity_start_time = None
+            self.last_activity_time = None
 
     async def video_streamer(self, websocket):
         while True:
@@ -368,37 +488,22 @@ class VideoProcessor:
             self.analysis_timestamps = self.analysis_timestamps[-max_frames:]
 
     async def get_frame_and_behavior(self):
-        """获取视频帧和行为检测结果"""
+        """获取视频帧"""
         try:
             # 获取当前帧
             with self.display_lock:
                 if self.display_frame is None:
-                    return None, None
+                    return None
                 frame = self.display_frame.copy()
-
-            current_time = time.time()
-            
-            # 进行行为检测
-            behavior_data = None
-            if current_time - self.last_behavior_time >= self.behavior_interval:
-                behavior_result = self._detect_behavior(frame)
-                if behavior_result:
-                    behavior_data = {
-                        "type": "behavior",
-                        "behavior": behavior_result["behavior"],
-                        "timestamp": datetime.now().isoformat(),
-                        "details": behavior_result.get("details", "")
-                    }
-                    self.last_behavior_time = current_time
 
             # 编码视频帧
             _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, VideoConfig.JPEG_QUALITY])
             
-            return buffer.tobytes(), behavior_data
+            return buffer.tobytes()
 
         except Exception as e:
-            logging.error(f"获取帧和行为数据时出错: {e}")
-            return None, None
+            logging.error(f"获取帧数据时出错: {e}")
+            return None
 
     def init_video_capture(self):
         """初始化或重新初始化视频捕获"""
@@ -416,4 +521,66 @@ class VideoProcessor:
         if not self.cap.isOpened():
             raise ValueError(f"无法打开视频源: {self.video_source}")
         logging.info(f"视频捕获已初始化: {self.video_source}")
+
+    def upload_to_oss(self, image, object_key=None):
+        """上传图像到阿里云OSS并返回URL"""
+        if object_key is None:
+            object_key = f"{OSSConfig.ALERT_PREFIX}alert_{int(time.time())}.jpg"
+        
+        try:
+            # 创建OSS连接
+            auth = oss2.Auth(OSSConfig.ACCESS_KEY_ID, OSSConfig.ACCESS_KEY_SECRET)
+            bucket = oss2.Bucket(auth, OSSConfig.ENDPOINT, OSSConfig.BUCKET)
+            
+            # 编码图像并上传
+            _, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, VideoConfig.JPEG_QUALITY])
+            bucket.put_object(object_key, buffer.tobytes())
+            
+            # 生成URL
+            url = f"https://{OSSConfig.BUCKET}.{OSSConfig.ENDPOINT}/{object_key}"
+            return url
+        except Exception as e:
+            # 不再回退到本地存储，直接抛出异常
+            logging.error(f"上传到OSS失败: {e}")
+            raise Exception(f"上传到OSS失败: {e}")
+
+    async def _add_to_vector_db(self, alert, event_timestamp: str):
+        """将预警信息添加到向量数据库"""
+        try:
+            import httpx
+            
+            # 检查alert内容是否为系统错误等，避免存入数据库
+            # （在 _run_analysis 中已过滤，这里可作为双重保险，但暂时省略）
+            allowed_activities = {
+                "睡觉", "玩手机", "喝饮料", "喝水", "吃东西", "专注工作学习",
+                "发现明火", "人员聚集", "打架斗殴"
+            }
+            activity_content = alert['content'].replace('开始', '').replace('结束', '').split('，')[0] # 提取核心活动内容
+            
+            if activity_content not in allowed_activities:
+                 logging.info(f"预警内容 '{activity_content}' 不属于定义活动，跳过添加到向量数据库。")
+                 return
+
+            # 提取预警文本内容
+            alert_text = f"{alert['timestamp']} - {alert['content']}"
+            if 'start_time' in alert and 'end_time' in alert:
+                alert_text += f"，从{alert['start_time']}持续到{alert['end_time']}，共{alert.get('duration_minutes', 0)}分钟"
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    RAGConfig.VECTOR_API_URL,
+                    json={
+                        "docs": [alert_text],
+                        "table_name": f"alert_{int(time.time())}",
+                        "event_timestamps": [event_timestamp]
+                    },
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    logging.info(f"预警信息已添加到向量数据库: {alert_text}")
+                else:
+                    logging.error(f"添加到向量数据库失败: {response.text}")
+        except Exception as e:
+            logging.error(f"添加预警到向量数据库出错: {e}")
 
