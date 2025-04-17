@@ -11,35 +11,24 @@
       ghost-class="ghost-panel"
       chosen-class="chosen-panel"
       drag-class="drag-panel"
+      @end="handleDragEnd"
     >
       <template #item="{element}">
-        <div v-if="element.id === 1" class="panel combined-monitor-panel" :style="getPanelStyle(1)" ref="panel1">
-          <CombinedMonitorPanel :videoSrc="videoFeedUrl" :videoWs="videoWs" :deviceWs="deviceWs" />
-          <div class="resize-handle resize-e" @mousedown="startResize($event, 1, 'e')"></div>
-          <div class="resize-handle resize-s" @mousedown="startResize($event, 1, 's')"></div>
-          <div class="resize-handle resize-se" @mousedown="startResize($event, 1, 'se')"></div>
-        </div>
-        <div v-else-if="element.id === 4" class="panel qa-panel" :style="getPanelStyle(4)" ref="panel4">
-          <QAPanel />
-          <div class="resize-handle resize-w" @mousedown="startResize($event, 4, 'w')"></div>
-          <div class="resize-handle resize-n" @mousedown="startResize($event, 4, 'n')"></div>
-          <div class="resize-handle resize-nw" @mousedown="startResize($event, 4, 'nw')"></div>
-          <div class="resize-handle resize-s" @mousedown="startResize($event, 4, 's')"></div>
-          <div class="resize-handle resize-e" @mousedown="startResize($event, 4, 'e')"></div>
-          <div class="resize-handle resize-sw" @mousedown="startResize($event, 4, 'sw')"></div>
-          <div class="resize-handle resize-se" @mousedown="startResize($event, 4, 'se')"></div>
-          <div class="resize-handle resize-ne" @mousedown="startResize($event, 4, 'ne')"></div>
-        </div>
-        <div v-else-if="element.id === 5" class="panel alert-replay-panel" :style="getPanelStyle(5)" ref="panel5">
-          <AlertReplayPanel :alerts="alerts" :wsConnection="alertsWs" />
-          <div class="resize-handle resize-e" @mousedown="startResize($event, 5, 'e')"></div>
-          <div class="resize-handle resize-n" @mousedown="startResize($event, 5, 'n')"></div>
-          <div class="resize-handle resize-ne" @mousedown="startResize($event, 5, 'ne')"></div>
-          <div class="resize-handle resize-w" @mousedown="startResize($event, 5, 'w')"></div>
-          <div class="resize-handle resize-s" @mousedown="startResize($event, 5, 's')"></div>
-          <div class="resize-handle resize-sw" @mousedown="startResize($event, 5, 'sw')"></div>
-          <div class="resize-handle resize-nw" @mousedown="startResize($event, 5, 'nw')"></div>
-          <div class="resize-handle resize-se" @mousedown="startResize($event, 5, 'se')"></div>
+        <div :class="['panel', getPanelClass(element.id)]" 
+             :style="getPanelStyle(element.id)" 
+             :ref="`panel${element.id}`">
+          <CombinedMonitorPanel v-if="element.id === 1" :videoSrc="videoFeedUrl" :videoWs="videoWs" :deviceWs="deviceWs" />
+          <AlertReplayPanel v-else-if="element.id === 5" :alerts="alerts" :wsConnection="alertsWs" />
+          <QAPanel v-else-if="element.id === 4" />
+          
+          <div class="resize-handle resize-e" @mousedown="startResize($event, element.id, 'e')"></div>
+          <div class="resize-handle resize-s" @mousedown="startResize($event, element.id, 's')"></div>
+          <div class="resize-handle resize-w" @mousedown="startResize($event, element.id, 'w')"></div>
+          <div class="resize-handle resize-n" @mousedown="startResize($event, element.id, 'n')"></div>
+          <div class="resize-handle resize-se" @mousedown="startResize($event, element.id, 'se')"></div>
+          <div class="resize-handle resize-sw" @mousedown="startResize($event, element.id, 'sw')"></div>
+          <div class="resize-handle resize-ne" @mousedown="startResize($event, element.id, 'ne')"></div>
+          <div class="resize-handle resize-nw" @mousedown="startResize($event, element.id, 'nw')"></div>
         </div>
       </template>
     </draggable>
@@ -50,7 +39,7 @@
 
 <script setup>
 // 这里将添加页面的逻辑，例如 WebSocket 连接、数据获取等
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 // import AppHeader from '../components/AppHeader.vue'; // 移除 Header 导入
 // import StatusBar from '../components/AppFooter.vue'; // 移除 StatusBar 导入
 
@@ -66,9 +55,15 @@ let alertsWs = ref(null); // 使用 ref
 let deviceWs = ref(null); // 设备列表的WebSocket连接
 const MAX_DISPLAY_ALERTS = 50; // 前端最多显示多少条预警
 
-// 定义面板顺序 - 移除独立的设备列表面板
+// 面板位置映射 (更新为新的网格区域)
+const panelPositions = ref({
+  1: 'left-top',    // 监控面板位于左上
+  5: 'left-bottom', // 预警面板位于左下
+  4: 'right'        // 问答面板位于右侧(占两行)
+});
+
 const panelOrder = ref([
-  { id: 1 }, // 合并的监控面板（视频+设备列表）
+  { id: 1 }, // 合并的监控面板
   { id: 5 }, // 预警面板
   { id: 4 }  // 智能问答面板
 ]);
@@ -87,8 +82,40 @@ const resizing = ref({
   startX: 0,
   startY: 0,
   startWidth: 0,
-  startHeight: 0
+  startHeight: 0,
+  containerWidth: 0,
+  initialColumns: '',
+  currentRowTemplate: '60vh 40vh'
 });
+
+// 获取面板类名
+function getPanelClass(panelId) {
+  const classes = ['panel-custom'];
+  
+  // 添加对应的面板类型类名
+  if (panelId === 1) classes.push('combined-monitor-panel');
+  else if (panelId === 5) classes.push('alert-replay-panel');
+  else if (panelId === 4) classes.push('qa-panel');
+  
+  // 添加网格区域类名
+  const position = panelPositions.value[panelId];
+  if (position) {
+    // 根据布局模式动态分配区域
+    if (layoutMode.value === 'vertical' && panelId === 4) {
+      classes.push('grid-area-main');
+    } else if (layoutMode.value === 'vertical') {
+      // 其他面板在垂直模式下分配到sub区域
+      const otherPanels = Object.keys(panelPositions.value).filter(id => id != 4);
+      const idx = otherPanels.indexOf(panelId.toString());
+      classes.push(idx === 0 ? 'grid-area-sub-1' : 'grid-area-sub-2');
+    } else {
+      // 水平模式直接使用position值
+      classes.push(`grid-area-${position}`);
+    }
+  }
+  
+  return classes;
+}
 
 // 获取面板样式
 function getPanelStyle(panelId) {
@@ -109,10 +136,20 @@ function startResize(event, panelId, direction) {
   event.preventDefault();
   event.stopPropagation();
   
-  const panel = document.querySelector(`.panel:nth-child(${panelId})`);
-  if (!panel) return;
+  // 更准确地获取面板元素
+  const panel = document.querySelector(`.panel[ref="panel${panelId}"]`) || 
+                document.querySelector(`.panel.${panelId === 1 ? 'combined-monitor-panel' : panelId === 4 ? 'qa-panel' : 'alert-replay-panel'}`);
+  
+  if (!panel) {
+    console.error(`找不到面板: ${panelId}`);
+    return;
+  }
   
   const rect = panel.getBoundingClientRect();
+  
+  // 获取container元素，提前准备好用于后续resize
+  const container = document.querySelector('.container');
+  const containerWidth = container.clientWidth;
   
   resizing.value = {
     active: true,
@@ -121,7 +158,9 @@ function startResize(event, panelId, direction) {
     startX: event.clientX,
     startY: event.clientY,
     startWidth: rect.width,
-    startHeight: rect.height
+    startHeight: rect.height,
+    containerWidth, // 存储容器宽度
+    initialColumns: window.getComputedStyle(container).gridTemplateColumns // 存储初始列配置
   };
   
   document.addEventListener('mousemove', handleResize);
@@ -129,13 +168,16 @@ function startResize(event, panelId, direction) {
   
   // 添加一个 class 到 panel 以禁用过渡效果
   panel.classList.add('resizing');
+  
+  // 禁用容器的hover效果和过渡
+  container.classList.add('resizing-active');
 }
 
 // 处理调整大小
 function handleResize(event) {
   if (!resizing.value.active) return;
   
-  const { panelId, direction, startX, startY, startWidth, startHeight } = resizing.value;
+  const { panelId, direction, startX, startY, startWidth, startHeight, containerWidth } = resizing.value;
   
   let newWidth = startWidth;
   let newHeight = startHeight;
@@ -148,14 +190,109 @@ function handleResize(event) {
     newWidth = startWidth + deltaX;
   } else if (direction.includes('w')) {
     newWidth = startWidth - deltaX;
-    console.warn("Resizing 'w'/'n' might have positioning issues with current setup.");
+    
+    // 智能问答面板向左扩展时
+    if (panelId === 4) {
+      const container = document.querySelector('.container');
+      if (container) {
+        // 计算新的比例
+        const qaColumnWidth = Math.max(200, newWidth);
+        const qaColumnPercentage = (qaColumnWidth / containerWidth) * 100;
+        
+        // 如果问答面板宽度超过总宽度的75%，切换到垂直布局
+        if (qaColumnPercentage > 75 && layoutMode.value === 'horizontal') {
+          layoutMode.value = 'vertical';
+          updateGridTemplate();
+          return;
+        } 
+        // 如果宽度回到小于70%，恢复水平布局
+        else if (qaColumnPercentage <= 70 && layoutMode.value === 'vertical') {
+          // 在垂直模式下，宽度的变化可能不准确，所以我们基于拖动方向判断
+          if (deltaX > 0) { // 向右拖动（缩小问答面板）
+            layoutMode.value = 'horizontal';
+            updateGridTemplate();
+            
+            // 重置宽度以适应新布局
+            setTimeout(() => {
+              const newQaPanel = document.querySelector('.qa-panel');
+              if (newQaPanel) {
+                const newRect = newQaPanel.getBoundingClientRect();
+                panelSizes.value[4] = {
+                  width: `${newRect.width}px`,
+                  height: `${newRect.height}px`
+                };
+              }
+            }, 50);
+            return;
+          }
+        }
+        
+        // 在水平布局时调整列宽
+        if (layoutMode.value === 'horizontal') {
+          const leftColumnPercentage = Math.max(20, 100 - qaColumnPercentage - 5);
+          container.style.gridTemplateColumns = `${leftColumnPercentage}% 40px ${qaColumnPercentage}%`;
+        }
+        
+        return;
+      }
+    }
   }
   
+  // 改进垂直布局下的高度调整逻辑，确保下方面板不被压缩
   if (direction.includes('s')) {
     newHeight = startHeight + deltaY;
+    
+    // 在垂直布局下，调整智能问答面板高度时，同时调整容器高度而不是压缩下方面板
+    if (layoutMode.value === 'vertical' && panelId === 4) {
+      const container = document.querySelector('.container');
+      if (container) {
+        // 获取下方面板的当前高度
+        const subPanels = document.querySelectorAll('.grid-area-sub-1, .grid-area-sub-2');
+        let subPanelHeight = 0;
+        
+        if (subPanels.length > 0) {
+          // 使用第一个下方面板的高度作为基准
+          const subPanelRect = subPanels[0].getBoundingClientRect();
+          subPanelHeight = subPanelRect.height;
+        } else {
+          // 默认最小高度
+          subPanelHeight = 200;
+        }
+        
+        // 设置间距
+        const gap = 30;
+        
+        // 计算QA面板的新高度，单位为像素
+        const qaHeight = Math.max(300, newHeight);
+        
+        // 计算容器的总高度 = QA面板高度 + 间距 + 下方面板高度
+        const containerHeightPx = qaHeight + gap + subPanelHeight;
+        
+        // 计算行模板，使用像素单位以确保精确定位
+        const rowTemplate = `${qaHeight}px ${subPanelHeight}px`;
+        
+        // 保存当前行高
+        resizing.value.currentRowTemplate = rowTemplate;
+        
+        // 设置容器高度
+        container.style.height = `${containerHeightPx + gap}px`;
+        container.style.gridTemplateRows = rowTemplate;
+        container.style.gap = `${gap}px`;
+        
+        // 防止被约束在视口内
+        container.style.minHeight = `${containerHeightPx + gap}px`;
+        
+        // 更新QA面板的尺寸
+        panelSizes.value[4] = {
+          width: '100%',
+          height: `${qaHeight}px`
+        };
+        
+        return;
+      }
+    }
   } else if (direction.includes('n')) {
     newHeight = startHeight - deltaY;
-    console.warn("Resizing 'w'/'n' might have positioning issues with current setup.");
   }
   
   // 设置最小尺寸
@@ -171,23 +308,263 @@ function handleResize(event) {
 
 // 停止调整大小
 function stopResize() {
-  if (!resizing.value.active) return; // 防止重复触发
-
-  const panelId = resizing.value.panelId;
-  // 找到对应的面板元素移除 resizing class
-  // 依赖于 DOM 结构，如果结构变化需要调整选择器
-  // 使用 ID 或更具体的 class 可能更好
-  const panelElement = document.querySelector(`.panel[ref='panel${panelId}']`) || document.querySelector(`.panel.${panelId === 1 ? 'video-panel' : panelId === 4 ? 'qa-panel' : 'alert-replay-panel'}`); // 基于 ref 或 class 查找
-  if (panelElement) {
-      panelElement.classList.remove('resizing');
-  } else {
-      // 如果找不到，尝试遍历所有 panel
-      document.querySelectorAll('.panel.resizing').forEach(el => el.classList.remove('resizing'));
+  if (!resizing.value.active) return;
+  
+  const container = document.querySelector('.container');
+  if (container) {
+    container.classList.remove('resizing-active');
+    
+    // 如果是垂直布局并且已经调整了行高，保存这个设置
+    if (layoutMode.value === 'vertical' && resizing.value.currentRowTemplate) {
+      // 保存当前行高到一个持久变量
+      savedRowTemplate.value = resizing.value.currentRowTemplate;
+      
+      // 确保滚动正常显示全部内容
+      if (container.offsetHeight > window.innerHeight) {
+        document.body.style.overflowY = 'auto';
+        document.documentElement.style.overflowY = 'auto';
+      }
+    }
   }
-
+  
+  const panels = document.querySelectorAll('.panel.resizing');
+  panels.forEach(panel => panel.classList.remove('resizing'));
+  
   resizing.value.active = false;
   document.removeEventListener('mousemove', handleResize);
   document.removeEventListener('mouseup', stopResize);
+}
+
+// 修改处理拖拽结束事件函数，确保保持面板大小
+function handleDragEnd(event) {
+  // 获取拖拽前和拖拽后的索引
+  const { oldIndex, newIndex } = event;
+  if (oldIndex === newIndex) return; // 没有变化
+  
+  // 获取当前的面板ID
+  const draggedPanelId = panelOrder.value[newIndex].id;
+  const targetPanelId = panelOrder.value[oldIndex].id;
+  
+  // 确定是左右互换还是上下互换
+  const isQAPanelInvolved = draggedPanelId === 4 || targetPanelId === 4;
+  
+  // 保存所有面板的原始尺寸和样式
+  const originalSizes = {};
+  const originalStyles = {};
+  panelOrder.value.forEach(panel => {
+    const id = panel.id;
+    // 保存尺寸
+    originalSizes[id] = {...panelSizes.value[id]};
+    
+    // 保存元素当前样式，用于后续恢复
+    const panelElement = document.querySelector(`.panel.${id === 1 ? 'combined-monitor-panel' : id === 4 ? 'qa-panel' : 'alert-replay-panel'}`);
+    if (panelElement) {
+      originalStyles[id] = {
+        width: panelElement.style.width,
+        height: panelElement.style.height,
+        style: window.getComputedStyle(panelElement)
+      };
+    }
+  });
+  
+  // 保存原始位置
+  const originalPositions = {...panelPositions.value};
+  
+  // 保存是否是垂直布局
+  const wasVertical = layoutMode.value === 'vertical';
+  
+  // 如果涉及到智能问答面板(ID=4)，进行左右互换逻辑
+  if (isQAPanelInvolved) {
+    // 获取所有面板ID
+    const panelIds = panelOrder.value.map(panel => panel.id);
+    const otherPanelIds = panelIds.filter(id => id !== 4);
+    
+    // 记录智能问答面板当前位置
+    const qaCurrentPosition = panelPositions.value[4];
+    const isQAOnLeft = qaCurrentPosition === 'left';
+    
+    // 根据当前位置重新设置网格区域
+    if (isQAOnLeft) {
+      // QA面板在左侧，需要移动到右侧
+      panelPositions.value[4] = 'right';
+      panelPositions.value[otherPanelIds[0]] = 'left-top';
+      panelPositions.value[otherPanelIds[1]] = 'left-bottom';
+    } else {
+      // QA面板在右侧，需要移动到左侧
+      panelPositions.value[4] = 'left';
+      panelPositions.value[otherPanelIds[0]] = 'right-top';
+      panelPositions.value[otherPanelIds[1]] = 'right-bottom';
+    }
+    
+    // 使用水平布局
+    layoutMode.value = 'horizontal';
+  } else {
+    // 仅左侧两个面板之间的上下互换
+    const temp = panelPositions.value[draggedPanelId];
+    panelPositions.value[draggedPanelId] = panelPositions.value[targetPanelId];
+    panelPositions.value[targetPanelId] = temp;
+  }
+  
+  // 更新网格模板
+  updateGridTemplate();
+  
+  // 在布局更新后延迟恢复原始尺寸，确保网格布局已经应用
+  setTimeout(() => {
+    // 遍历并应用正确的尺寸
+    panelOrder.value.forEach(panel => {
+      const id = panel.id;
+      
+      // 智能问答模块(ID=4)特殊处理 - 无论如何都保持原始尺寸
+      if (id === 4) {
+        // 保持原始尺寸
+        const qaOriginalSize = originalSizes[id];
+        
+        // 从垂直布局切换到水平布局时调整高度
+        if (wasVertical) {
+          qaOriginalSize.height = '100%';
+        }
+        
+        // 更新尺寸
+        panelSizes.value[id] = {...qaOriginalSize};
+      } else {
+        // 其他面板处理：如果位置类型改变，调整尺寸以适应新容器
+        const wasOnRight = originalPositions[id].includes('right');
+        const isNowOnRight = panelPositions.value[id].includes('right');
+        
+        if (wasOnRight !== isNowOnRight) {
+          // 位置类型变化，使用适应新位置的尺寸
+          panelSizes.value[id] = { width: '100%', height: '100%' };
+        } else {
+          // 保持原始尺寸
+          panelSizes.value[id] = {...originalSizes[id]};
+        }
+      }
+    });
+    
+    // 调整列宽度比例
+    const container = document.querySelector('.container');
+    if (container && layoutMode.value === 'horizontal') {
+      // 获取QA面板当前位置和尺寸
+      const qaPanel = document.querySelector('.panel.qa-panel');
+      if (qaPanel) {
+        const qaWidth = qaPanel.offsetWidth;
+        const containerWidth = container.offsetWidth;
+        const gapWidth = 40; // 中间间隔宽度
+        
+        // 计算QA面板宽度百分比
+        const qaWidthPercentage = (qaWidth / containerWidth) * 100;
+        const gapWidthPercentage = (gapWidth / containerWidth) * 100;
+        const otherWidthPercentage = 100 - qaWidthPercentage - gapWidthPercentage;
+        
+        // 根据QA面板位置设置列宽
+        if (panelPositions.value[4] === 'right') {
+          container.style.gridTemplateColumns = `${otherWidthPercentage}% ${gapWidth}px ${qaWidthPercentage}%`;
+        } else if (panelPositions.value[4] === 'left') {
+          container.style.gridTemplateColumns = `${qaWidthPercentage}% ${gapWidth}px ${otherWidthPercentage}%`;
+        }
+      }
+    }
+  }, 100);
+}
+
+// 添加一个新的响应式变量跟踪布局模式
+const layoutMode = ref('horizontal'); // 'horizontal' 或 'vertical'
+
+// 添加一个新的响应式变量保存行高模板
+const savedRowTemplate = ref('60vh 40vh'); // 默认值
+
+// 修改网格模板函数，支持保持智能问答模块大小
+function updateGridTemplate() {
+  const container = document.querySelector('.container');
+  if (!container) return;
+  
+  if (layoutMode.value === 'horizontal') {
+    // 获取智能问答面板的位置
+    const qaPosition = panelPositions.value[4];
+    const isQAOnRight = qaPosition === 'right';
+    const isQAOnLeft = qaPosition === 'left';
+    
+    // 设置网格区域
+    container.style.gridTemplateAreas = `
+      "left-top    .    right-top"
+      "left-bottom .    right-bottom"
+    `;
+    
+    // 初始列宽配置
+    let leftWidth = '2fr';
+    let gapWidth = '40px';
+    let rightWidth = '1fr';
+    
+    // 查找智能问答面板元素，获取其当前宽度
+    const qaPanel = document.querySelector('.panel.qa-panel');
+    if (qaPanel) {
+      const qaStyle = window.getComputedStyle(qaPanel);
+      const qaWidth = parseFloat(qaStyle.width);
+      
+      if (!isNaN(qaWidth) && qaWidth > 0) {
+        const containerWidth = container.clientWidth;
+        const qaPercentage = Math.min(70, Math.max(30, (qaWidth / containerWidth) * 100));
+        const gapPercentage = (40 / containerWidth) * 100;
+        const otherPercentage = 100 - qaPercentage - gapPercentage;
+        
+        if (isQAOnRight) {
+          leftWidth = `${otherPercentage}%`;
+          rightWidth = `${qaPercentage}%`;
+        } else if (isQAOnLeft) {
+          leftWidth = `${qaPercentage}%`;
+          rightWidth = `${otherPercentage}%`;
+        }
+      }
+    }
+    
+    // 应用列宽
+    container.style.gridTemplateColumns = `${leftWidth} ${gapWidth} ${rightWidth}`;
+    
+    // 行高设置
+    container.style.gridTemplateRows = '40vh 40vh';
+    container.style.height = '80vh';
+    container.style.gap = '20px';
+    container.style.minHeight = '600px';
+    
+  } else {
+    // 垂直布局逻辑保持不变
+    container.style.gridTemplateAreas = `
+      "main main main"
+      "sub-1 . sub-2"
+    `;
+    container.style.gridTemplateColumns = '1fr 40px 1fr';
+    
+    // 获取下方面板的默认高度 (像素单位)
+    const subPanelDefaultHeight = 300;
+    
+    // 计算QA面板的初始高度 (像素单位)
+    const qaInitialHeight = 500;
+    
+    // 设置间距
+    const gap = 30;
+    
+    // 使用保存的行高或计算默认行高
+    if (savedRowTemplate.value && !savedRowTemplate.value.includes('undefined')) {
+      container.style.gridTemplateRows = savedRowTemplate.value;
+    } else {
+      // 为新的垂直布局设置默认行高 (像素单位)
+      container.style.gridTemplateRows = `${qaInitialHeight}px ${subPanelDefaultHeight}px`;
+      savedRowTemplate.value = `${qaInitialHeight}px ${subPanelDefaultHeight}px`;
+    }
+    
+    // 计算初始容器高度
+    const containerInitialHeight = qaInitialHeight + gap + subPanelDefaultHeight + gap;
+    
+    // 设置容器高度，确保足够高
+    container.style.height = `${containerInitialHeight}px`;
+    container.style.minHeight = `${containerInitialHeight}px`;
+    
+    // 增加垂直间距，防止重叠
+    container.style.gap = `${gap}px`;
+  }
+  
+  // 添加过渡效果
+  container.style.transition = 'grid-template-rows 0.3s ease, grid-template-columns 0.3s ease, height 0.3s ease, gap 0.3s ease';
 }
 
 // 初始化视频 WebSocket
@@ -299,6 +676,15 @@ onMounted(() => {
   console.log('主监控页面已挂载');
   initVideoWebSocket();
   initAlertsWebSocket();
+  
+  // 初始化网格布局
+  updateGridTemplate();
+  
+  // 添加视口大小变化监听
+  window.addEventListener('resize', checkScrollNeeded);
+  
+  // 检查初始状态
+  setTimeout(checkScrollNeeded, 300);
 });
 
 onUnmounted(() => {
@@ -307,6 +693,36 @@ onUnmounted(() => {
   closeAlertsWebSocket();
   document.removeEventListener('mousemove', handleResize);
   document.removeEventListener('mouseup', stopResize);
+  window.removeEventListener('resize', checkScrollNeeded);
+});
+
+// 检查是否需要滚动
+function checkScrollNeeded() {
+  const container = document.querySelector('.container');
+  if (!container) return;
+  
+  // 检查是否垂直布局
+  if (layoutMode.value === 'vertical') {
+    const containerHeight = container.offsetHeight;
+    const viewportHeight = window.innerHeight;
+    
+    if (containerHeight > viewportHeight * 0.9) {
+      container.classList.add('vertical-scroll');
+      // 确保整个页面可以滚动
+      document.documentElement.style.overflow = 'auto';
+    } else {
+      container.classList.remove('vertical-scroll');
+    }
+  } else {
+    container.classList.remove('vertical-scroll');
+  }
+}
+
+// 修改布局模式变化时的处理
+watch(layoutMode, (newMode) => {
+  updateGridTemplate();
+  // 布局变化后，检查滚动需求
+  setTimeout(checkScrollNeeded, 300);
 });
 </script>
 
@@ -318,11 +734,14 @@ onUnmounted(() => {
   background-color: var(--dark-bg);
   width: 100vw;
   overflow-x: hidden;
+  overflow-y: auto; /* 允许垂直滚动 */
+  scroll-behavior: smooth; /* 平滑滚动 */
   /* 移除垂直居中，让内容从顶部开始 */
   /* justify-content: center; */
   /* 确保没有边距和内边距导致的空白 */
   margin: 0;
   padding: 0;
+  --vertical-panel-gap: 30px; /* 定义间距变量方便使用 */
 }
 
 .container {
@@ -343,14 +762,28 @@ onUnmounted(() => {
   /* 内边距适当缩减 */
   padding: 10px 0;
   box-sizing: border-box;
+  transition: grid-template-columns 0.1s ease; /* 添加过渡效果 */
+  transition: grid-template-rows 0.3s ease, grid-template-columns 0.3s ease, height 0.3s ease, gap 0.3s ease;
 }
 
 /* 定义网格区域 */
-.combined-monitor-panel { grid-area: monitor; }
-.alert-replay-panel { grid-area: alert; }
-.qa-panel { 
-  grid-area: qa;
-}
+.grid-area-monitor { grid-area: monitor; }
+.grid-area-alert { grid-area: alert; }
+.grid-area-qa { grid-area: qa; }
+
+/* 网格区域动态分配 - 修改为更灵活的布局 */
+/* 水平布局 (左右两栏) */
+.grid-area-left-top { grid-area: left-top; }
+.grid-area-left-bottom { grid-area: left-bottom; }
+.grid-area-right-top { grid-area: right-top; }
+.grid-area-right-bottom { grid-area: right-bottom; }
+.grid-area-left { grid-area: left-top / left-top / left-bottom / left-top; } /* 占据左侧两行 */
+.grid-area-right { grid-area: right-top / right-top / right-bottom / right-top; } /* 占据右侧两行 */
+
+/* 垂直布局 (上下两栏) */
+.grid-area-main { grid-area: main; }
+.grid-area-sub-1 { grid-area: sub-1; }
+.grid-area-sub-2 { grid-area: sub-2; }
 
 /* 响应式调整 */
 @media (max-width: 900px) {
@@ -383,10 +816,12 @@ onUnmounted(() => {
   overflow: hidden; /* 保持隐藏，手柄使用 z-index */
   height: 100%; /* 默认占满单元格 */
   width: 100%; /* 默认占满单元格 */
-  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, width 0.3s ease, height 0.3s ease;
   border: 1px solid rgba(79, 209, 197, 0.1); /* Subtler border */
   min-width: 200px;
   min-height: 150px;
+  box-sizing: border-box; /* 确保边框和内边距不会增加宽高 */
+  margin-bottom: 0; /* 移除可能存在的底部边距 */
 }
 
 .panel:hover {
@@ -492,16 +927,31 @@ onUnmounted(() => {
 }
 
 /* Draggable styles remain the same */
-.ghost-panel { opacity: 0.5; background: rgba(0, 0, 0, 0.2) !important; }
-.chosen-panel { box-shadow: 0 0 20px rgba(79, 209, 197, 0.6) !important; z-index: 20; }
-.drag-panel { transform: rotate(1deg) scale(1.03); z-index: 30; }
+.ghost-panel { 
+  opacity: 0.5; 
+  background: rgba(0, 0, 0, 0.2) !important;
+  transform: scale(0.95);
+  border: 2px dashed rgba(79, 209, 197, 0.5) !important;
+}
+
+.chosen-panel { 
+  box-shadow: 0 0 30px rgba(79, 209, 197, 0.8) !important; 
+  z-index: 20;
+  opacity: 0.9;
+}
+
+.drag-panel { 
+  transform: rotate(2deg) scale(1.02); 
+  z-index: 30;
+  cursor: grabbing !important;
+}
 
 /* Resize Handle Styles */
 .resize-handle {
   position: absolute;
-  background-color: transparent; /* Make invisible by default */
-  z-index: 15; /* Above panel content, below hover effects? */
-  transition: background-color 0.2s ease;
+  background-color: transparent;
+  z-index: 20; /* 提高z-index确保在面板内容之上 */
+  transition: background-color 0.1s ease;
 }
 
 .panel:hover .resize-handle {
@@ -515,7 +965,7 @@ onUnmounted(() => {
 
 /* Directions */
 .resize-e { top: 0; right: -2px; width: 8px; height: 100%; cursor: e-resize; }
-.resize-w { top: 0; left: -2px; width: 8px; height: 100%; cursor: w-resize; }
+.resize-w { top: 0; left: -5px; width: 10px; height: 100%; cursor: w-resize; }
 .resize-s { bottom: -2px; left: 0; width: 100%; height: 8px; cursor: s-resize; }
 .resize-n { top: -2px; left: 0; width: 100%; height: 8px; cursor: n-resize; }
 
@@ -528,19 +978,136 @@ onUnmounted(() => {
 /* Resizing state */
 .panel.resizing {
   transition: none !important;
-  user-select: none; /* Prevent text selection during resize */
-  /* Optionally add a visual indicator */
-  /* box-shadow: 0 0 0 2px rgba(79, 209, 197, 0.5) inset !important; */
+  user-select: none;
+  box-shadow: 0 0 0 2px rgba(79, 209, 197, 0.5) !important;
 }
 
 /* Global disable pointer events on panel content during resize */
-.panel.resizing > *:not(.panel-title):not(.resize-handle) {
-    pointer-events: none;
+.panel.resizing > *:not(.resize-handle) {
+  pointer-events: none;
 }
 
 /* 修改AppHeader组件相关样式，如果存在的话 */
 :deep(.header) {
   margin: 0;
   padding: 0;
+}
+
+/* 调整resize handle的触摸区域和可见性 */
+.qa-panel:hover .resize-w {
+  background-color: rgba(128, 90, 213, 0.2); /* 增加可见性 */
+}
+
+/* 当调整大小时禁用过渡效果 */
+.container.resizing-active {
+  transition: none !important;
+}
+
+/* 当调整大小时禁用面板的hover效果 */
+.container.resizing-active .panel:hover {
+  transform: none;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(79, 209, 197, 0.15);
+  border-color: rgba(79, 209, 197, 0.1);
+}
+
+/* 突出显示左侧调整手柄 */
+.resize-w {
+  top: 0;
+  left: -5px;
+  width: 10px;
+  height: 100%;
+  cursor: w-resize;
+}
+
+.qa-panel .resize-w {
+  background-color: rgba(128, 90, 213, 0.1); /* 始终显示一点颜色 */
+}
+
+.qa-panel .resize-w:hover,
+.qa-panel .resize-w:active {
+  background-color: rgba(128, 90, 213, 0.4); /* 悬停或激活状态更明显 */
+}
+
+/* 修改垂直布局下的间距 */
+.container {
+  /* 其他样式保持不变 */
+  transition: grid-template-rows 0.3s ease, grid-template-columns 0.3s ease, height 0.3s ease, gap 0.3s ease;
+}
+
+/* 垂直布局时为下方面板添加上边距 */
+.grid-area-sub-1, 
+.grid-area-sub-2 {
+  margin-top: 10px; /* 额外增加上边距 */
+}
+
+/* 确保面板内容不会溢出 */
+.panel {
+  /* 其他样式保持不变 */
+  box-sizing: border-box; /* 确保边框和内边距不会增加宽高 */
+  margin-bottom: 0; /* 移除可能存在的底部边距 */
+}
+
+/* 改进垂直模式下的视觉分隔 */
+.monitoring-page {
+  /* 其他样式保持不变 */
+  --vertical-panel-gap: 30px; /* 定义间距变量方便使用 */
+}
+
+/* 增加拖拽时的视觉反馈 */
+.qa-panel.chosen-panel {
+  box-shadow: 0 0 30px rgba(128, 90, 213, 0.8) !important;
+  border-color: rgba(128, 90, 213, 0.4) !important;
+}
+
+/* 确保QA面板在水平布局中显示正确 */
+.grid-area-left.qa-panel,
+.grid-area-right.qa-panel {
+  height: 100% !important; /* 确保高度占满网格区域 */
+}
+
+/* 调整拖拽过程中的面板样式 */
+.container.resizing-active .panel.qa-panel {
+  transition: none !important; /* 拖拽时禁用过渡 */
+}
+
+/* 在水平布局中增强QA面板边界视觉效果 */
+.panel.qa-panel {
+  z-index: 5; /* 确保QA面板在其他面板之上 */
+}
+
+/* 改进QA面板在左侧时的样式 */
+.grid-area-left.qa-panel {
+  z-index: 6; /* 提高层级，确保可见 */
+  height: 100% !important;
+}
+
+/* 强化拖动状态的视觉反馈 */
+.qa-panel.chosen-panel {
+  box-shadow: 0 0 30px rgba(128, 90, 213, 0.8) !important;
+  border-color: rgba(128, 90, 213, 0.4) !important;
+  opacity: 0.95 !important;
+}
+
+/* 添加拖动指示器，使拖拽方向更明显 */
+.panel-title::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 10px;
+  margin-left: auto;
+  background-color: rgba(255, 255, 255, 0.2);
+  clip-path: polygon(0% 0%, 100% 50%, 0% 100%);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.panel-title:hover::after {
+  opacity: 0.6;
+}
+
+/* 增强水平布局下的面板间隔 */
+.container {
+  /* 其他样式保持不变 */
+  gap: 20px !important; /* 确保间距始终存在 */
 }
 </style> 
