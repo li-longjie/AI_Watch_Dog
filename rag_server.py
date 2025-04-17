@@ -1,5 +1,5 @@
 from fastapi import FastAPI, WebSocket
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import uvicorn
 from pydantic import BaseModel
 from langchain_community.vectorstores import Chroma
@@ -8,13 +8,16 @@ from langchain.text_splitter import CharacterTextSplitter
 import jieba  # 添加中文分词
 import httpx
 from config import APIConfig, VideoConfig, ServerConfig  # 导入API配置
-from llm_service import LLMService  # 添加导入
+from llm_service import LLMService, query_siliconflow_model  # 修改导入
 from video_processor import VideoProcessor
 import asyncio
 import json
 from fastapi.middleware.cors import CORSMiddleware
 import datetime  # 导入 datetime 模块
 import logging  # 添加日志记录
+import re
+import requests
+import os
 
 app = FastAPI()
 
@@ -40,6 +43,17 @@ vector_store = Chroma(embedding_function=embeddings, persist_directory="./chroma
 # 定义停用词
 STOP_WORDS = {"监控", "显示", "在", "了", "吗", "什么", "的", "：", "，", "。", "年", "月", "日"}
 
+# 硅基流动API配置
+SILICONFLOW_API_KEY = "sk-xugvbuiyayzzfeoelfytnfioimnwvzouawxlavixynzuloui"
+SILICONFLOW_MODEL = "deepseek-ai/DeepSeek-V3"
+
+# 修改监控关键词集合
+MONITORING_KEYWORDS = {
+    "监控", "摄像头", "发现", "检测到", "看到", "观察到", "显示", "记录", 
+    "camera", "detected", "视频", "画面", "拍到", "出现", "动作", "行为",
+    "活动", "状态", "情况","什么时候"
+}
+
 def preprocess_text(text: str) -> set:
     """预处理文本，进行分词并移除停用词"""
     # 使用结巴分词
@@ -55,6 +69,40 @@ class TextInput(BaseModel):
 class SearchRequest(BaseModel):
     query: str
     k: int = 3
+
+class ChatRequest(BaseModel):
+    query: str
+
+class WebpageRequest(BaseModel):
+    url: str
+    
+class FilesystemRequest(BaseModel):
+    path: str = "C:\\Users\\Jason\\Desktop"  # 默认桌面路径
+
+# 在app初始化后添加MCPO服务配置
+MCPO_BASE_URL = "http://127.0.0.1:8000"  # MCPO服务地址
+MCPO_FETCH_URL = f"{MCPO_BASE_URL}/fetch/fetch"
+MCPO_TIME_URL = f"{MCPO_BASE_URL}/time/get_current_time"  # 修改为正确的时间端点
+MCPO_FILESYSTEM_URL = f"{MCPO_BASE_URL}/filesystem/list_directory"
+# 添加browser-use服务配置
+MCPO_BROWSER_AGENT_URL = f"{MCPO_BASE_URL}/browser-use/run_browser_agent"
+MCPO_DEEP_SEARCH_URL = f"{MCPO_BASE_URL}/browser-use/run_deep_search"
+
+# 添加新的请求模型
+class ListDocsRequest(BaseModel):
+    table_name: Optional[str] = None
+    limit: Optional[int] = 100
+    offset: Optional[int] = 0
+
+# 添加browser-use的请求模型
+class BrowserAgentRequest(BaseModel):
+    task: str
+    add_infos: Optional[str] = None
+
+class DeepSearchRequest(BaseModel):
+    research_task: str
+    max_query_per_iteration: Optional[int] = 3
+    max_search_iterations: Optional[int] = 10
 
 @app.post("/add_text/")
 async def add_text(request: TextInput): # 使用更新后的 TextInput 模型
@@ -174,7 +222,7 @@ async def search(request: SearchRequest):
 
 问题：{query}
 
-请注意提取记录中的具体时间信息，精确回答用户的时间问题。如记录中无相关信息，请明确说明。回答要简洁有效。"""
+请注意提取记录中的具体时间信息，精确回答用户的时间问题，同时回答要更亲切拟人自然。如记录中无相关信息，请明确说明。回答要简洁有效。"""
         else:
             prompt = f"""基于以下监控记录回答问题：
 
@@ -183,7 +231,7 @@ async def search(request: SearchRequest):
 
 问题：{query}
 
-请根据监控记录准确回答问题，回答问题时要简洁有效，只保留关键信息。如果记录中没有相关信息，请明确说明。"""
+请根据监控记录准确回答问题，回答问题时要简洁有效但是要更亲切拟人自然，只保留关键信息。如果记录中没有相关信息，请明确说明。"""
 
         # 调用大模型生成回答
         answer = await LLMService.get_response(prompt)
@@ -304,6 +352,418 @@ async def get_summaries(request: SearchRequest):
         return {
             "status": "error",
             "message": str(e)
+        }
+
+def extract_urls(text):
+    """从文本中提取URL"""
+    # 修改正则表达式，匹配URL直到空格、引号或中文字符
+    url_pattern = re.compile(r'(https?://[^\s"\'，。？！；：（）、<>\u4e00-\u9fff]+)')
+    urls = url_pattern.findall(text)
+    
+    # 清理URL，移除可能附加的非URL字符
+    cleaned_urls = []
+    for url in urls:
+        # 确保URL中不包含中文字符
+        valid_url = re.sub(r'[\u4e00-\u9fff].*$', '', url)
+        if valid_url:
+            cleaned_urls.append(valid_url)
+    
+    return cleaned_urls
+
+@app.post("/extract_webpage/")
+async def extract_webpage(request: WebpageRequest):
+    try:
+        # 确保URL格式正确
+        if not request.url.startswith('http'):
+            url = 'https://' + request.url
+        else:
+            url = request.url
+            
+        # 请求MCPO Fetch服务
+        response = requests.post(
+            MCPO_FETCH_URL,
+            json={"url": url, "max_length": 8000},
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            return {
+                "status": "error",
+                "message": f"无法获取网页内容: HTTP {response.status_code}"
+            }
+            
+        # 获取网页内容
+        web_content = response.json()
+        
+        # 构建提示词
+        prompt = f"以下是从URL '{url}' 获取的网页内容。请分析并总结这个网页的主要内容。\n\n"
+        
+        if isinstance(web_content, list) and len(web_content) > 0:
+            content_text = web_content[0]
+        elif isinstance(web_content, dict):
+            content_text = web_content.get("content", str(web_content))
+        else:
+            content_text = str(web_content)
+            
+        prompt += content_text
+        
+        # 调用LLM生成回答
+        summary = await LLMService.get_response(prompt)
+        
+        return {
+            "status": "success",
+            "answer": summary,
+            "url": url
+        }
+    except Exception as e:
+        logging.error(f"提取网页内容错误: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.post("/get_time/")
+async def get_time():
+    try:
+        # 请求MCPO Time服务
+        response = requests.post(
+            MCPO_TIME_URL,
+            json={"timezone": "Asia/Shanghai"},
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            return {
+                "status": "error",
+                "message": f"无法获取时间信息: HTTP {response.status_code}"
+            }
+            
+        # 获取时间信息
+        time_info = response.json()
+        
+        # 准备提示词给大模型，包含原始时间数据
+        prompt = f"以下是从时间服务获取的数据: {json.dumps(time_info, ensure_ascii=False)}\n\n"
+        prompt += "请以自然友好的方式向用户展示当前的日期和时间信息。"
+       
+        
+        # 调用大模型生成回答
+        time_response = await LLMService.get_response(prompt)
+        
+        return {
+            "status": "success",
+            "answer": time_response,
+            "raw_time_data": time_info  # 可选：保留原始数据供前端使用
+        }
+    except Exception as e:
+        logging.error(f"获取时间信息错误: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.post("/list_files/")
+async def list_files(request: FilesystemRequest):
+    try:
+        # 请求MCPO Filesystem服务
+        response = requests.post(
+            MCPO_FILESYSTEM_URL,
+            json={"path": request.path},
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            return {
+                "status": "error",
+                "message": f"无法获取文件列表: HTTP {response.status_code}"
+            }
+            
+        # 获取文件列表
+        file_list = response.json()
+        
+        if isinstance(file_list, dict) and "error" in file_list:
+            return {
+                "status": "error",
+                "message": file_list["error"]
+            }
+            
+        # 构建提示词
+        filesystem_prompt = f"用户请求查看目录 '{request.path}' 中的文件和文件夹。\n\n"
+        filesystem_prompt += f"以下是从文件系统获取的原始列表:\n{json.dumps(file_list, ensure_ascii=False)}\n\n"
+        filesystem_prompt += "请以友好、有条理的方式向用户展示这些文件和文件夹。可以对内容进行分类（如分为文件夹和文件两类，或按文件类型分类），并简洁说明文件总数。"
+        
+        # 调用LLM生成回答
+        files_summary = await LLMService.get_response(filesystem_prompt)
+        
+        return {
+            "status": "success",
+            "answer": files_summary,
+            "raw_files": file_list  # 可选：保留原始数据供前端使用
+        }
+    except Exception as e:
+        logging.error(f"获取文件列表错误: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.post("/detect_intent/")
+async def detect_intent(request: ChatRequest):
+    """检测用户查询意图并调用相应服务"""
+    query = request.query
+    
+    try:
+        # 1. 优先检查是否是监控相关问题 (RAG搜索)
+        if any(keyword in query for keyword in MONITORING_KEYWORDS):
+            # 直接使用现有的search函数进行RAG搜索
+            search_result = await search(SearchRequest(query=query, k=3))
+            if search_result.get("status") == "success":
+                return search_result
+            else:
+                raise Exception("RAG搜索失败")
+                
+        # 2. 检查是否是浏览器任务请求
+        browser_keywords = ["浏览", "打开网站", "访问网站", "browse", "visit", "打开浏览器", "网页", "链接", "页面"]
+        if any(keyword in query.lower() for keyword in browser_keywords):
+            try:
+                # 从查询中提取URL作为附加信息
+                urls = extract_urls(query)
+                add_infos = urls[0] if urls else None
+                
+                # 调用browser-agent服务
+                logging.info(f"检测到浏览器任务请求: {query}")
+                browser_request = BrowserAgentRequest(task=query, add_infos=add_infos)
+                return await run_browser_agent(browser_request)
+            except Exception as e:
+                logging.error(f"处理浏览器任务时出错: {e}")
+                # 返回友好的错误消息
+                return {
+                    "status": "success",
+                    "answer": f"我尝试执行浏览器任务'{query}'，但遇到了技术问题。请稍后再试，或者使用更明确的指令。"
+                }
+            
+        # 3. 检查是否是深度搜索请求
+        search_keywords = ["深度搜索", "研究", "查找资料", "调研", "deep search", "research"]
+        if any(keyword in query.lower() for keyword in search_keywords):
+            try:
+                # 调用deep-search服务
+                logging.info(f"检测到深度搜索请求: {query}")
+                search_request = DeepSearchRequest(research_task=query)
+                return await run_deep_search(search_request)
+            except Exception as e:
+                logging.error(f"处理深度搜索请求时出错: {e}")
+                # 返回友好的错误消息
+                return {
+                    "status": "success",
+                    "answer": f"我尝试执行深度搜索任务'{query}'，但遇到了技术问题。请稍后再试，或者尝试使用更具体的研究主题。"
+                }
+        
+        # 4. 检查是否含有URL (MCP网页提取服务)
+        urls = extract_urls(query)
+        if urls:
+            # 调用网页提取服务
+            webpage_request = WebpageRequest(url=urls[0])
+            return await extract_webpage(webpage_request)
+            
+        # 5. 检查是否是时间查询 (MCP时间服务)
+        time_keywords = ["时间", "几点", "日期", "today", "time", "date", "clock", "现在"]
+        if any(keyword in query.lower() for keyword in time_keywords):
+            return await get_time()
+            
+        # 6. 检查是否是文件系统查询 (MCP文件系统服务)
+        filesystem_keywords = ["文件", "目录", "桌面", "文件夹", "Desktop", "desktop", "files", "folders"]
+        if any(keyword in query for keyword in filesystem_keywords):
+            # 默认查询桌面路径
+            path = "C:\\Users\\Jason\\Desktop"
+            return await list_files(FilesystemRequest(path=path))
+        
+        # 7. 如果不属于以上类型，视为日常交流，直接调用大模型回答
+        prompt = f"用户问题: {query}\n\n请以友好的方式回答用户的问题。"
+        model_response = await query_siliconflow_model(prompt)
+        
+        return {
+            "status": "success",
+            "answer": model_response
+        }
+        
+    except Exception as e:
+        logging.error(f"意图检测或处理过程出错: {e}")
+        return {
+            "status": "error",
+            "message": f"处理您的请求时出错: {str(e)}"
+        }
+
+@app.post("/list_docs/")
+async def list_docs(request: ListDocsRequest):
+    """列出向量数据库中的文档"""
+    try:
+        # 构建过滤条件
+        filter_dict = {}
+        if request.table_name:
+            filter_dict["source"] = request.table_name
+            
+        # 获取所有匹配的文档
+        results = vector_store.get(
+            where=filter_dict if filter_dict else None,
+            limit=request.limit,
+            offset=request.offset
+        )
+        
+        if not results['ids']:
+            return {
+                "status": "success",
+                "message": "没有找到文档",
+                "total": 0,
+                "documents": []
+            }
+            
+        # 整理文档信息
+        documents = []
+        for i in range(len(results['ids'])):
+            doc_info = {
+                "id": results['ids'][i],
+                "content": results['documents'][i],
+                "metadata": results['metadatas'][i] if results['metadatas'] else {},
+            }
+            documents.append(doc_info)
+            
+        return {
+            "status": "success",
+            "total": len(documents),
+            "documents": documents
+        }
+        
+    except Exception as e:
+        logging.error(f"获取文档列表错误: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.post("/run_browser_agent/")
+async def run_browser_agent(request: BrowserAgentRequest):
+    """调用MCP browser-use服务执行浏览器任务"""
+    try:
+        # 准备请求参数
+        request_data = {
+            "task": request.task
+        }
+        
+        if request.add_infos:
+            request_data["add_infos"] = request.add_infos
+            
+        # 发送请求到MCP browser-use服务，增加超时时间并使用异步请求
+        logging.info(f"调用browser-agent执行任务: {request.task}")
+        
+        # 创建异步HTTP客户端
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            try:
+                response = await client.post(
+                    MCPO_BROWSER_AGENT_URL,
+                    json=request_data
+                )
+                
+                if response.status_code != 200:
+                    logging.error(f"调用browser-agent失败: {response.status_code}")
+                    return {
+                        "status": "success",  # 仍返回success以避免前端显示错误
+                        "answer": f"我尝试执行浏览器任务'{request.task}'，但服务返回了错误。可能是网络问题或任务复杂度超出了能力范围。您可以尝试简化任务或稍后再试。",
+                    }
+                
+                # 获取结果
+                result = response.json()
+                
+                # 将结果通过大模型处理
+                prompt = f"以下是我通过浏览器执行任务 '{request.task}' 的结果:\n\n"
+                if isinstance(result, list) and len(result) > 0:
+                    prompt += f"{result[0]}\n\n"
+                else:
+                    prompt += f"{result}\n\n"
+                prompt += "请以友好且有条理的方式总结这些结果，保留关键信息，并向用户展示最重要的发现。"
+                
+                # 调用大模型生成回答
+                browser_response = await LLMService.get_response(prompt)
+                
+                return {
+                    "status": "success",
+                    "answer": browser_response,
+                    "raw_result": result
+                }
+            except httpx.TimeoutException:
+                logging.error(f"调用browser-agent超时，任务可能仍在执行")
+                return {
+                    "status": "success",  # 返回success避免前端错误
+                    "answer": f"我开始执行浏览器任务'{request.task}'，但任务执行时间超过了等待时间。这可能是因为网页加载缓慢或任务较复杂。您可以尝试简化任务或指定具体网址。"
+                }
+    except Exception as e:
+        logging.error(f"调用browser-agent时出错: {e}")
+        return {
+            "status": "success",  # 更改为success以避免前端显示错误
+            "answer": f"我尝试执行浏览器任务'{request.task}'，但遇到了一些问题: {str(e)}。请稍后再试或尝试不同的任务。"
+        }
+
+@app.post("/run_deep_search/")
+async def run_deep_search(request: DeepSearchRequest):
+    """调用MCP browser-use服务执行深度搜索任务"""
+    try:
+        # 准备请求参数
+        request_data = {
+            "research_task": request.research_task
+        }
+        
+        if request.max_query_per_iteration:
+            request_data["max_query_per_iteration"] = request.max_query_per_iteration
+            
+        if request.max_search_iterations:
+            request_data["max_search_iterations"] = request.max_search_iterations
+            
+        # 发送请求到MCP browser-use服务，使用异步HTTP客户端
+        logging.info(f"调用deep-search执行研究任务: {request.research_task}")
+        
+        # 创建异步HTTP客户端
+        async with httpx.AsyncClient(timeout=360.0) as client:
+            try:
+                response = await client.post(
+                    MCPO_DEEP_SEARCH_URL,
+                    json=request_data
+                )
+                
+                if response.status_code != 200:
+                    logging.error(f"调用deep-search失败: {response.status_code}")
+                    return {
+                        "status": "success",
+                        "answer": f"我尝试执行深度搜索任务'{request.research_task}'，但服务返回了错误。可能是网络问题或查询过于复杂。您可以尝试简化研究主题或提供更具体的问题。"
+                    }
+                
+                # 获取结果
+                result = response.json()
+                
+                # 将结果通过大模型处理
+                prompt = f"以下是我对 '{request.research_task}' 进行深度搜索的结果:\n\n"
+                if isinstance(result, list) and len(result) > 0:
+                    prompt += f"{result[0]}\n\n"
+                else:
+                    prompt += f"{result}\n\n"
+                prompt += "请以友好且专业的方式总结这些研究结果，保留重要信息，并向用户展示最关键的发现和见解。"
+                
+                # 调用大模型生成回答
+                search_response = await LLMService.get_response(prompt)
+                
+                return {
+                    "status": "success",
+                    "answer": search_response,
+                    "raw_result": result
+                }
+            except httpx.TimeoutException:
+                logging.error(f"调用deep-search超时，任务可能仍在执行")
+                return {
+                    "status": "success",
+                    "answer": f"我开始执行深度搜索任务'{request.research_task}'，但由于任务复杂度或网络原因，搜索时间超过了等待时间。深度搜索通常需要更长时间，您可以尝试使用更具体的问题或稍后再试。"
+                }
+    except Exception as e:
+        logging.error(f"调用deep-search时出错: {e}")
+        return {
+            "status": "success",
+            "answer": f"我尝试进行深度搜索'{request.research_task}'，但遇到了一些问题: {str(e)}。请稍后再试或尝试不同的研究主题。"
         }
 
 if __name__ == "__main__":

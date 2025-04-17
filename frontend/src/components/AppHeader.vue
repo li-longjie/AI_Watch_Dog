@@ -64,7 +64,7 @@
         <div class="title-line title-line-top"></div>
         <div class="title-line title-line-bottom"></div>
       </div>
-      <span class="title-flicker">视频监控智能分析系统</span>
+      <span class="title-flicker">融合AI-Agent的多模态行为监控系统</span>
       <div class="circuit-decoration circuit-left"></div>
       <div class="circuit-decoration circuit-right"></div>
       <div class="title-badge badge-left">v2.1</div>
