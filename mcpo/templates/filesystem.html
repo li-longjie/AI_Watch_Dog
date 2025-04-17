@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文件系统管理 - MCPO测试</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .panel {
+            background-color: #f5f5f5;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .file-list {
+            list-style: none;
+            padding: 0;
+        }
+        .file-list li {
+            padding: 8px;
+            border-bottom: 1px solid #ddd;
+            cursor: pointer;
+        }
+        .file-list li:hover {
+            background-color: #e9e9e9;
+        }
+        .file-icon {
+            margin-right: 10px;
+        }
+        .file-content {
+            width: 100%;
+            min-height: 300px;
+            padding: 10px;
+            font-family: monospace;
+            margin: 10px 0;
+        }
+        .btn {
+            padding: 8px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 5px;
+        }
+        .btn:hover {
+            background-color: #45a049;
+        }
+        .input-group {
+            margin-bottom: 10px;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        .input-group input, .input-group textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .alert {
+            padding: 10px;
+            background-color: #f44336;
+            color: white;
+            margin-bottom: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #4CAF50;
+        }
+        .nav-links {
+            margin-bottom: 20px;
+        }
+        .nav-links a {
+            margin-right: 15px;
+            text-decoration: none;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>文件系统管理 - MCPO测试</h1>
+        
+        <div class="nav-links">
+            <a href="/">返回聊天</a>
+            <a href="#" id="refresh-button">刷新文件列表</a>
+        </div>
+        
+        <div class="alert" id="alert-box"></div>
+        
+        <div class="panel">
+            <h3>浏览文件</h3>
+            
+            <div class="input-group">
+                <label for="path-input">当前路径:</label>
+                <input type="text" id="path-input" value="." placeholder="输入路径">
+                <button class="btn" id="path-go">浏览</button>
+            </div>
+            
+            <ul class="file-list" id="file-list">
+                <li>加载中...</li>
+            </ul>
+        </div>
+        
+        <div class="panel">
+            <h3>文件内容</h3>
+            <div class="input-group">
+                <label for="file-path">文件路径:</label>
+                <input type="text" id="file-path" placeholder="选择文件或输入路径">
+                <button class="btn" id="read-btn">读取</button>
+            </div>
+            
+            <textarea class="file-content" id="file-content" placeholder="文件内容将显示在这里"></textarea>
+            
+            <button class="btn" id="save-btn">保存文件</button>
+        </div>
+        
+        <div class="panel">
+            <h3>搜索文件</h3>
+            <div class="input-group">
+                <label for="search-path">搜索路径:</label>
+                <input type="text" id="search-path" value="." placeholder="在哪个目录搜索">
+            </div>
+            <div class="input-group">
+                <label for="search-pattern">搜索模式:</label>
+                <input type="text" id="search-pattern" placeholder="*.*">
+            </div>
+            <button class="btn" id="search-btn">搜索</button>
+            
+            <div id="search-results" style="margin-top: 10px;">
+                <p>搜索结果将显示在这里</p>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始加载文件列表
+            listDirectory('.');
+            
+            // 绑定路径浏览按钮
+            document.getElementById('path-go').addEventListener('click', function() {
+                const path = document.getElementById('path-input').value || '.';
+                listDirectory(path);
+            });
+            
+            // 绑定刷新按钮
+            document.getElementById('refresh-button').addEventListener('click', function(e) {
+                e.preventDefault();
+                const path = document.getElementById('path-input').value || '.';
+                listDirectory(path);
+            });
+            
+            // 绑定读取按钮
+            document.getElementById('read-btn').addEventListener('click', function() {
+                const path = document.getElementById('file-path').value;
+                if (path) {
+                    readFile(path);
+                } else {
+                    showAlert('请输入文件路径', false);
+                }
+            });
+            
+            // 绑定保存按钮
+            document.getElementById('save-btn').addEventListener('click', function() {
+                const path = document.getElementById('file-path').value;
+                const content = document.getElementById('file-content').value;
+                if (path) {
+                    writeFile(path, content);
+                } else {
+                    showAlert('请输入文件路径', false);
+                }
+            });
+            
+            // 绑定搜索按钮
+            document.getElementById('search-btn').addEventListener('click', function() {
+                const path = document.getElementById('search-path').value || '.';
+                const pattern = document.getElementById('search-pattern').value || '*';
+                searchFiles(path, pattern);
+            });
+        });
+        
+        // 列出目录内容
+        function listDirectory(path) {
+            fetch('/api/files/list', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ path: path })
+            })
+            .then(response => response.json())
+            .then(data => {
+                const fileList = document.getElementById('file-list');
+                fileList.innerHTML = '';
+                
+                if (data.error) {
+                    showAlert(data.error, false);
+                    return;
+                }
+                
+                if (Array.isArray(data)) {
+                    data.forEach(item => {
+                        const li = document.createElement('li');
+                        const isDir = item.startsWith('[DIR]');
+                        const name = isDir ? item.substring(5).trim() : item.substring(6).trim();
+                        const icon = isDir ? '📁' : '📄';
+                        
+                        li.innerHTML = `<span class="file-icon">${icon}</span> ${name}`;
+                        li.dataset.path = path === '.' ? name : `${path}/${name}`;
+                        li.dataset.isDir = isDir;
+                        
+                        li.addEventListener('click', function() {
+                            if (isDir) {
+                                document.getElementById('path-input').value = this.dataset.path;
+                                listDirectory(this.dataset.path);
+                            } else {
+                                document.getElementById('file-path').value = this.dataset.path;
+                                readFile(this.dataset.path);
+                            }
+                        });
+                        
+                        fileList.appendChild(li);
+                    });
+                } else {
+                    fileList.innerHTML = '<li>无法解析返回的数据</li>';
+                }
+            })
+            .catch(error => {
+                showAlert('获取目录列表失败: ' + error, false);
+            });
+        }
+        
+        // 读取文件
+        function readFile(path) {
+            fetch('/api/files/read', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ path: path })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    showAlert(data.error, false);
+                    return;
+                }
+                
+                // 显示文件内容
+                if (Array.isArray(data) && data.length > 0) {
+                    document.getElementById('file-content').value = data[0];
+                    showAlert('文件读取成功', true);
+                } else {
+                    document.getElementById('file-content').value = JSON.stringify(data, null, 2);
+                }
+            })
+            .catch(error => {
+                showAlert('读取文件失败: ' + error, false);
+            });
+        }
+        
+        // 写入文件
+        function writeFile(path, content) {
+            fetch('/api/files/write', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    path: path,
+                    content: content
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    showAlert(data.error, false);
+                    return;
+                }
+                
+                showAlert('文件保存成功', true);
+            })
+            .catch(error => {
+                showAlert('保存文件失败: ' + error, false);
+            });
+        }
+        
+        // 搜索文件
+        function searchFiles(path, pattern) {
+            fetch('/api/files/search', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    path: path,
+                    pattern: pattern
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                const resultsDiv = document.getElementById('search-results');
+                
+                if (data.error) {
+                    resultsDiv.innerHTML = `<p class="error">错误: ${data.error}</p>`;
+                    return;
+                }
+                
+                if (Array.isArray(data)) {
+                    if (data.length === 0) {
+                        resultsDiv.innerHTML = '<p>未找到匹配的文件</p>';
+                    } else {
+                        let html = '<ul class="search-results-list">';
+                        data.forEach(item => {
+                            html += `<li><a href="#" class="search-result" data-path="${item}">${item}</a></li>`;
+                        });
+                        html += '</ul>';
+                        resultsDiv.innerHTML = html;
+                        
+                        // 绑定搜索结果点击事件
+                        document.querySelectorAll('.search-result').forEach(link => {
+                            link.addEventListener('click', function(e) {
+                                e.preventDefault();
+                                document.getElementById('file-path').value = this.dataset.path;
+                                readFile(this.dataset.path);
+                            });
+                        });
+                    }
+                } else {
+                    resultsDiv.innerHTML = '<p>无法解析返回的数据</p>';
+                }
+            })
+            .catch(error => {
+                document.getElementById('search-results').innerHTML = `<p class="error">搜索失败: ${error}</p>`;
+            });
+        }
+        
+        // 显示提示信息
+        function showAlert(message, isSuccess) {
+            const alertBox = document.getElementById('alert-box');
+            alertBox.textContent = message;
+            alertBox.style.display = 'block';
+            
+            if (isSuccess) {
+                alertBox.classList.add('success');
+            } else {
+                alertBox.classList.remove('success');
+            }
+            
+            setTimeout(() => {
+                alertBox.style.display = 'none';
+            }, 3000);
+        }
+    </script>
+</body>
+</html> 
