@@ -76,14 +76,13 @@ class ChatRequest(BaseModel):
 class WebpageRequest(BaseModel):
     url: str
     
-class FilesystemRequest(BaseModel):
-    path: str = "C:\\Users\\Jason\\Desktop"  # 默认桌面路径
+
 
 # 在app初始化后添加MCPO服务配置
 MCPO_BASE_URL = "http://127.0.0.1:8000"  # MCPO服务地址
 MCPO_FETCH_URL = f"{MCPO_BASE_URL}/fetch/fetch"
 MCPO_TIME_URL = f"{MCPO_BASE_URL}/time/get_current_time"  # 修改为正确的时间端点
-MCPO_FILESYSTEM_URL = f"{MCPO_BASE_URL}/filesystem/list_directory"
+
 # 添加browser-use服务配置
 MCPO_BROWSER_AGENT_URL = f"{MCPO_BASE_URL}/browser-use/run_browser_agent"
 MCPO_DEEP_SEARCH_URL = f"{MCPO_BASE_URL}/browser-use/run_deep_search"
@@ -461,50 +460,7 @@ async def get_time():
             "message": str(e)
         }
 
-@app.post("/list_files/")
-async def list_files(request: FilesystemRequest):
-    try:
-        # 请求MCPO Filesystem服务
-        response = requests.post(
-            MCPO_FILESYSTEM_URL,
-            json={"path": request.path},
-            timeout=10
-        )
-        
-        if response.status_code != 200:
-            return {
-                "status": "error",
-                "message": f"无法获取文件列表: HTTP {response.status_code}"
-            }
-            
-        # 获取文件列表
-        file_list = response.json()
-        
-        if isinstance(file_list, dict) and "error" in file_list:
-            return {
-                "status": "error",
-                "message": file_list["error"]
-            }
-            
-        # 构建提示词
-        filesystem_prompt = f"用户请求查看目录 '{request.path}' 中的文件和文件夹。\n\n"
-        filesystem_prompt += f"以下是从文件系统获取的原始列表:\n{json.dumps(file_list, ensure_ascii=False)}\n\n"
-        filesystem_prompt += "请以友好、有条理的方式向用户展示这些文件和文件夹。可以对内容进行分类（如分为文件夹和文件两类，或按文件类型分类），并简洁说明文件总数。"
-        
-        # 调用LLM生成回答
-        files_summary = await LLMService.get_response(filesystem_prompt)
-        
-        return {
-            "status": "success",
-            "answer": files_summary,
-            "raw_files": file_list  # 可选：保留原始数据供前端使用
-        }
-    except Exception as e:
-        logging.error(f"获取文件列表错误: {e}")
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+
 
 @app.post("/detect_intent/")
 async def detect_intent(request: ChatRequest):
@@ -521,17 +477,87 @@ async def detect_intent(request: ChatRequest):
             else:
                 raise Exception("RAG搜索失败")
                 
-        # 2. 检查是否是浏览器任务请求
-        browser_keywords = ["浏览", "打开网站", "访问网站", "browse", "visit", "打开浏览器", "网页", "链接", "页面"]
+        # 2. 检查是否含有URL (MCP网页提取服务) - 优先处理
+        urls = extract_urls(query)
+        if urls:
+            # 调用网页提取服务
+            webpage_request = WebpageRequest(url=urls[0])
+            return await extract_webpage(webpage_request)
+        
+        # 3. 检查是否是搜索相关请求 (包括图片搜索、资料搜索等)
+        search_keywords = [
+            "搜索", "查找", "联网搜索", "网上搜索", "搜一下", "查一查", 
+            "图片", "照片", "图像", "picture", "image", "photo",
+            "资料", "信息", "新闻", "最新", "了解", "查询",
+            "search", "find", "lookup", "google", "百度"
+        ]
+        if any(keyword in query.lower() for keyword in search_keywords):
+            try:
+                logging.info(f"检测到搜索请求，调用DuckDuckGo: {query}")
+                
+                # 可以先返回一个"正在搜索"的状态
+                # 或者直接进行搜索（当前做法）
+                result = await call_duckduckgo_search_api(query)
+                return {
+                    "status": "success",
+                    "answer": result
+                }
+            except Exception as e:
+                logging.error(f"调用DuckDuckGo搜索功能失败: {e}")
+                return {
+                    "status": "success",
+                    "answer": f"我尝试为您搜索'{query}'，但遇到了技术问题。请稍后再试，或尝试使用更具体的搜索关键词。"
+                }
+        
+        # 4. 检查是否是逻辑推理请求
+        reasoning_keywords = [
+            "分析", "推理", "思考", "解决", "计算", "求解", "逐步",
+            "reasoning", "analyze", "solve", "calculate", "step by step",
+            "为什么", "怎么样", "如何", "原理", "机制", "逻辑"
+        ]
+        if any(keyword in query.lower() for keyword in reasoning_keywords):
+            try:
+                logging.info(f"检测到推理请求，调用Sequential Thinking: {query}")
+                result = await call_sequential_thinking_api(query)
+                return {
+                    "status": "success",
+                    "answer": result
+                }
+            except Exception as e:
+                logging.error(f"调用Sequential Thinking功能失败: {e}")
+                return {
+                    "status": "success",
+                    "answer": f"我尝试进行逻辑推理'{query}'，但遇到了技术问题。请稍后再试，或尝试简化问题。"
+                }
+        
+        # 5. 检查是否是地图相关请求
+        map_keywords = [
+            "地图", "导航", "路线", "地址", "位置", "附近", "天气",
+            "从", "到", "怎么去", "如何到达", "交通", "距离",
+            "map", "navigation", "route", "location", "address", "nearby"
+        ]
+        if any(keyword in query.lower() for keyword in map_keywords):
+            try:
+                logging.info(f"检测到地图请求，调用百度地图: {query}")
+                result = await call_baidu_map_api(query)
+                return {
+                    "status": "success",
+                    "answer": result
+                }
+            except Exception as e:
+                logging.error(f"调用百度地图功能失败: {e}")
+                return {
+                    "status": "success",
+                    "answer": f"我尝试处理地图查询'{query}'，但遇到了技术问题。请稍后再试，或提供更具体的地址信息。"
+                }
+            
+        # 6. 检查是否是浏览器任务请求（只有明确的交互式浏览任务才调用browser-agent）
+        browser_keywords = ["浏览", "打开网站", "访问网站", "browse", "visit", "打开浏览器"]
         if any(keyword in query.lower() for keyword in browser_keywords):
             try:
-                # 从查询中提取URL作为附加信息
-                urls = extract_urls(query)
-                add_infos = urls[0] if urls else None
-                
                 # 调用browser-agent服务
                 logging.info(f"检测到浏览器任务请求: {query}")
-                browser_request = BrowserAgentRequest(task=query, add_infos=add_infos)
+                browser_request = BrowserAgentRequest(task=query, add_infos=None)
                 return await run_browser_agent(browser_request)
             except Exception as e:
                 logging.error(f"处理浏览器任务时出错: {e}")
@@ -540,10 +566,10 @@ async def detect_intent(request: ChatRequest):
                     "status": "success",
                     "answer": f"我尝试执行浏览器任务'{query}'，但遇到了技术问题。请稍后再试，或者使用更明确的指令。"
                 }
-            
-        # 3. 检查是否是深度搜索请求
-        search_keywords = ["深度搜索", "研究", "查找资料", "调研", "deep search", "research"]
-        if any(keyword in query.lower() for keyword in search_keywords):
+        
+        # 7. 检查是否是深度搜索请求
+        deep_search_keywords = ["深度搜索", "研究", "调研", "deep search", "research"]
+        if any(keyword in query.lower() for keyword in deep_search_keywords):
             try:
                 # 调用deep-search服务
                 logging.info(f"检测到深度搜索请求: {query}")
@@ -556,27 +582,32 @@ async def detect_intent(request: ChatRequest):
                     "status": "success",
                     "answer": f"我尝试执行深度搜索任务'{query}'，但遇到了技术问题。请稍后再试，或者尝试使用更具体的研究主题。"
                 }
-        
-        # 4. 检查是否含有URL (MCP网页提取服务)
-        urls = extract_urls(query)
-        if urls:
-            # 调用网页提取服务
-            webpage_request = WebpageRequest(url=urls[0])
-            return await extract_webpage(webpage_request)
             
-        # 5. 检查是否是时间查询 (MCP时间服务)
+        # 8. 检查是否是时间查询 (MCP时间服务)
         time_keywords = ["时间", "几点", "日期", "today", "time", "date", "clock", "现在"]
         if any(keyword in query.lower() for keyword in time_keywords):
             return await get_time()
             
-        # 6. 检查是否是文件系统查询 (MCP文件系统服务)
-        filesystem_keywords = ["文件", "目录", "桌面", "文件夹", "Desktop", "desktop", "files", "folders"]
+        # 9. 检查是否是文件系统查询 (调用app.py服务)
+        filesystem_keywords = ["文件", "目录", "桌面", "文件夹", "Desktop", "desktop", "files", "folders", "桌面上", "文件列表", "查看文件", "创建文件", "删除文件", "重命名", "移动文件"]
         if any(keyword in query for keyword in filesystem_keywords):
-            # 默认查询桌面路径
-            path = "C:\\Users\\Jason\\Desktop"
-            return await list_files(FilesystemRequest(path=path))
+            # 调用app.py的统一聊天API
+            try:
+                logging.info(f"检测到文件系统查询，转发到app.py: {query}")
+                result = await call_app_py_api(query)
+                return {
+                    "status": "success",
+                    "answer": result
+                }
+            except Exception as e:
+                logging.error(f"调用app.py文件系统功能失败: {e}")
+                return {
+                    "status": "success",
+                    "answer": f"我尝试处理文件操作请求'{query}'，但遇到了技术问题。请确保所有服务正常运行，或稍后再试。"
+                }
+
         
-        # 7. 如果不属于以上类型，视为日常交流，直接调用大模型回答
+        # 10. 如果不属于以上类型，视为日常交流，直接调用大模型回答
         prompt = f"用户问题: {query}\n\n请以友好的方式回答用户的问题。"
         model_response = await query_siliconflow_model(prompt)
         
@@ -765,6 +796,190 @@ async def run_deep_search(request: DeepSearchRequest):
             "status": "success",
             "answer": f"我尝试进行深度搜索'{request.research_task}'，但遇到了一些问题: {str(e)}。请稍后再试或尝试不同的研究主题。"
         }
+
+async def call_app_py_api(query: str) -> str:
+    """调用app.py的统一聊天API处理文件系统请求"""
+    try:
+        app_py_url = "http://127.0.0.1:8086/api/unified-chat"
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                app_py_url,
+                json={"message": query},
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("answer", "处理完成，但未收到有效回答")
+            else:
+                logging.error(f"app.py API返回错误: {response.status_code} - {response.text}")
+                return f"文件系统服务暂时不可用，请稍后重试。"
+                
+    except Exception as e:
+        logging.error(f"调用app.py API异常: {e}")
+        return f"连接文件系统服务时出错: {str(e)}"
+
+async def call_specialized_services(query: str, service_type: str) -> str:
+    """调用专门的服务处理特定类型的请求"""
+    try:
+        app_py_url = "http://127.0.0.1:8086/api/unified-chat"
+        
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # 根据服务类型构建请求消息
+            if service_type == "duckduckgo_search":
+                # 对于搜索请求，确保包含搜索关键词
+                message = f"搜索: {query}"
+            elif service_type == "sequential_thinking":
+                # 对于逻辑推理请求，确保包含推理关键词
+                message = f"分析推理: {query}"
+            elif service_type == "baidu_map":
+                # 对于地图请求，确保包含地图关键词
+                message = f"地图查询: {query}"
+            else:
+                # 默认直接使用原始查询
+                message = query
+            
+            logging.info(f"调用{service_type}服务处理: {message}")
+            
+            response = await client.post(
+                app_py_url,
+                json={"message": message},
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                answer = result.get("answer", "处理完成，但未收到有效回答")
+                
+                # 记录成功调用
+                logging.info(f"{service_type}服务调用成功，返回内容长度: {len(answer)}")
+                return answer
+            else:
+                error_msg = f"{service_type}服务返回错误: {response.status_code}"
+                logging.error(f"{error_msg} - {response.text}")
+                
+                # 根据不同服务类型返回友好的错误信息
+                if service_type == "duckduckgo_search":
+                    return f"抱歉，搜索服务暂时不可用。您可以稍后重试，或尝试使用更具体的搜索关键词。"
+                elif service_type == "sequential_thinking":
+                    return f"抱歉，逻辑推理服务暂时不可用。您可以稍后重试，或尝试简化问题。"
+                elif service_type == "baidu_map":
+                    return f"抱歉，地图服务暂时不可用。您可以稍后重试，或提供更具体的地址信息。"
+                else:
+                    return f"抱歉，{service_type}服务暂时不可用，请稍后重试。"
+                
+    except httpx.TimeoutException:
+        timeout_msg = f"{service_type}服务请求超时"
+        logging.error(timeout_msg)
+        
+        if service_type == "duckduckgo_search":
+            return f"搜索请求处理时间较长，可能是网络问题。请稍后重试或使用更简单的搜索词。"
+        elif service_type == "sequential_thinking":
+            return f"逻辑推理任务较复杂，处理时间超时。请尝试简化问题或稍后重试。"
+        elif service_type == "baidu_map":
+            return f"地图查询超时，可能是网络问题。请稍后重试或检查地址格式。"
+        else:
+            return f"{service_type}服务处理超时，请稍后重试。"
+    
+    except Exception as e:
+        error_msg = f"调用{service_type}服务异常: {str(e)}"
+        logging.error(error_msg)
+        
+        if service_type == "duckduckgo_search":
+            return f"搜索功能遇到技术问题: {str(e)}。请稍后重试。"
+        elif service_type == "sequential_thinking":
+            return f"逻辑推理功能遇到技术问题: {str(e)}。请稍后重试。"
+        elif service_type == "baidu_map":
+            return f"地图功能遇到技术问题: {str(e)}。请稍后重试。"
+        else:
+            return f"连接{service_type}服务时出错: {str(e)}"
+
+async def call_duckduckgo_search_api(query: str) -> str:
+    """调用app.py的DuckDuckGo搜索功能"""
+    try:
+        app_py_url = "http://127.0.0.1:8086/api/unified-chat"
+        
+        # 增加超时时间到150秒
+        async with httpx.AsyncClient(timeout=150.0) as client:
+            # 构建搜索请求消息，确保触发搜索意图
+            search_message = f"搜索: {query}"
+            
+            logging.info(f"开始搜索请求: {search_message}")
+            
+            response = await client.post(
+                app_py_url,
+                json={"message": search_message},
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                answer = result.get("answer", "搜索完成，但未收到有效结果")
+                logging.info(f"搜索完成，返回内容长度: {len(answer)}")
+                return answer
+            else:
+                logging.error(f"搜索服务API返回错误: {response.status_code} - {response.text}")
+                return f"搜索服务暂时不可用，请稍后重试。"
+                
+    except httpx.TimeoutException:
+        logging.error(f"搜索请求超时: {query}")
+        return f"搜索'{query}'的时间较长，请稍后重试或使用更具体的关键词。"
+    except Exception as e:
+        logging.error(f"调用搜索服务API异常: {e}")
+        return f"连接搜索服务时出错: {str(e)}"
+
+async def call_sequential_thinking_api(query: str) -> str:
+    """调用app.py的Sequential Thinking逻辑推理功能"""
+    try:
+        app_py_url = "http://127.0.0.1:8086/api/unified-chat"
+        
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # 构建推理请求消息，确保触发推理意图
+            thinking_message = f"逐步分析推理: {query}"
+            
+            response = await client.post(
+                app_py_url,
+                json={"message": thinking_message},
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("answer", "推理完成，但未收到有效回答")
+            else:
+                logging.error(f"推理服务API返回错误: {response.status_code} - {response.text}")
+                return f"逻辑推理服务暂时不可用，请稍后重试。"
+                
+    except Exception as e:
+        logging.error(f"调用推理服务API异常: {e}")
+        return f"连接逻辑推理服务时出错: {str(e)}"
+
+async def call_baidu_map_api(query: str) -> str:
+    """调用app.py的百度地图功能"""
+    try:
+        app_py_url = "http://127.0.0.1:8086/api/unified-chat"
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # 构建地图请求消息，确保触发地图意图
+            map_message = f"地图查询: {query}"
+            
+            response = await client.post(
+                app_py_url,
+                json={"message": map_message},
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("answer", "地图查询完成，但未收到有效结果")
+            else:
+                logging.error(f"地图服务API返回错误: {response.status_code} - {response.text}")
+                return f"地图服务暂时不可用，请稍后重试。"
+                
+    except Exception as e:
+        logging.error(f"调用地图服务API异常: {e}")
+        return f"连接地图服务时出错: {str(e)}"
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8085) 

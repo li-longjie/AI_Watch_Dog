@@ -62,7 +62,7 @@ chroma_db
 # 操作系统相关
 .DS_Store
 Thumbs.db
-
+config.py
 # 输出目录
 archive/
 passwords.txt

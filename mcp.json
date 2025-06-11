@@ -13,26 +13,28 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "C:\\Users\\Jason\\Desktop"
+        "C:\\Users\\Maomao\\Desktop"
       ]
     },
-    "browser-use": {
-      "command": "uv",
+    "sequential-thinking": {
+      "command": "npx",
       "args": [
-        "--directory",
-        "C:\\Users\\Jason\\PycharmProjects\\mcp-browser-use",
-        "run",
-        "src\\mcp_server_browser_use\\server.py"
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
+    },
+    "duckduckgo-search": {
+      "command": "uvx",
+      "args": ["duckduckgo-mcp-server"]
+    },
+    "baidu-map": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@baidumap/mcp-server-baidu-map"
       ],
-      "env":{
-        "MCP_API_KEY":"sk-f3261f60bcbb4cf69d7ab4927c6e2444",
-        "MCP_MODEL_PROVIDER":"deepseek",
-        "MCP_MODEL_NAME":"deepseek-chat",
-        "MCP_HEADLESS":"false",
-        "BROWSER_USE_LOGGING_LEVEL":"INFO",
-        "PYTHONIOENCODING":"utf-8",
-        "PYTHONUNBUFFERED":"1",
-        "PYTHONUTF8":"1"
+      "env": {
+        "BAIDU_MAP_API_KEY": "LzwzKG9LO2j07B1ZDzgYApqfjW9vOxPv"
       }
     }
   }
