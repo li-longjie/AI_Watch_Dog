@@ -11,9 +11,20 @@
       <span class="current-time" id="current-time">{{ currentTime }}</span>
     </div>
     <div class="status-bar-right">
-      <!-- 使用 router-link 进行页面导航 -->
-      <router-link v-if="$route.path !== '/behavior'" to="/behavior" class="status-bar-btn">行为分析</router-link>
-      <router-link v-if="$route.path === '/behavior'" to="/" class="status-bar-btn">返回监控</router-link>
+      <!-- 根据当前路由显示不同的按钮 -->
+      <template v-if="$route.path === '/'">
+        <router-link to="/behavior" class="status-bar-btn">行为分析</router-link>
+        <router-link to="/voice" class="status-bar-btn">语音对话</router-link>
+      </template>
+      <template v-else-if="$route.path === '/behavior'">
+        <router-link to="/" class="status-bar-btn">返回监控</router-link>
+        <router-link to="/voice" class="status-bar-btn">语音对话</router-link>
+      </template>
+      <template v-else-if="$route.path === '/voice'">
+        <router-link to="/" class="status-bar-btn">返回监控</router-link>
+        <router-link to="/behavior" class="status-bar-btn">行为分析</router-link>
+      </template>
+      <!-- 可以在这里添加其他页面的按钮 -->
     </div>
   </div>
 </template>

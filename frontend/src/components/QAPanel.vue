@@ -2,7 +2,18 @@
   <div class="qa-panel-container">
     <div class="panel-title">
       <div class="status-indicator" :class="{ 'connected': isConnected }"></div>
-      <span>AI智能体</span>
+      <span>桌面活动助手</span>
+      <div class="mode-switch">
+        <button @click="toggleMode('ai')" :class="{ 'active': currentMode === 'ai' }" class="mode-btn ai-btn">
+          🤖 AI问答
+        </button>
+        <button @click="toggleMode('monitoring')" :class="{ 'active': currentMode === 'monitoring' }" class="mode-btn monitoring-btn">
+          🖥️ 活动检索
+        </button>
+        <button @click="clearChat" class="mode-btn clear-btn" title="清除对话">
+          🗑️ 清除
+        </button>
+      </div>
     </div>
     <div class="qa-content">
       <div class="chat-history" ref="chatHistoryRef">
@@ -43,9 +54,14 @@
         <div class="data-point"></div>
       </div>
       <div class="input-hint"></div>
+      <!-- 添加监控记录查询提示 -->
+      <div class="monitoring-hint" @click="insertMonitoringQuery">
+        <div class="hint-icon">💡</div>
+        <div class="hint-text">提示: 使用"你好，请告诉我..."可查询监控记录</div>
+      </div>
     </div>
     <div class="chat-input-area">
-      <input type="text" v-model="userInput" @keyup.enter="sendMessage" placeholder="输入您的问题..." class="chat-input">
+      <input type="text" v-model="userInput" @keyup.enter="sendMessage" :placeholder="currentMode === 'ai' ? '输入您的问题...' : '问我关于您的桌面活动，如：过去30分钟我做了什么？'" class="chat-input">
       <button @click="toggleVoiceRecognition" class="voice-button" :class="{ 'recording': isRecording }" title="语音输入">
         <span v-if="isRecording">🎙️</span>
         <span v-else>🎤</span>
@@ -79,19 +95,18 @@ const isSpeaking = ref(false);
 const currentSpeakingId = ref(null);
 const isThinking = ref(false);
 const thinkingDots = ref("");
+const currentMode = ref('ai'); // 默认AI问答模式
 
 // 语音识别相关
 const audioContext = ref(null);
 const mediaRecorder = ref(null);
 const audioChunks = ref([]);
 const audioStream = ref(null);
-const whisperWebSocket = ref(null);
-const whisperConnected = ref(false);
-const WHISPER_SERVER_URL = 'ws://localhost:8086/ws/';
-const WHISPER_API_URL = 'http://localhost:8086/transcribe_chunk/';
 
 // RAG服务器地址
 const RAG_SERVER_URL = 'http://localhost:8085';
+// 语音处理服务器地址
+const VOICE_SERVER_URL = 'http://localhost:5000';
 
 // 过滤掉系统连接消息
 const filteredMessages = computed(() => {
@@ -109,41 +124,35 @@ const getAvatarIcon = (sender) => {
   }
 };
 
-// 初始化WebSocket连接到Whisper服务
-const initWhisperWebSocket = () => {
-  try {
-    whisperWebSocket.value = new WebSocket(WHISPER_SERVER_URL);
-    
-    whisperWebSocket.value.onopen = () => {
-      console.log('已连接到Whisper WebSocket服务');
-      whisperConnected.value = true;
-    };
-    
-    whisperWebSocket.value.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.transcription) {
-          recognizedText.value = data.transcription;
-        } else if (data.error) {
-          console.error('Whisper错误:', data.error);
-        }
-      } catch (e) {
-        console.error('解析Whisper响应错误:', e);
-      }
-    };
-    
-    whisperWebSocket.value.onerror = (error) => {
-      console.error('Whisper WebSocket错误:', error);
-      whisperConnected.value = false;
-    };
-    
-    whisperWebSocket.value.onclose = () => {
-      console.log('Whisper WebSocket连接已关闭');
-      whisperConnected.value = false;
-    };
-  } catch (e) {
-    console.error('创建Whisper WebSocket连接错误:', e);
+// 插入监控查询模板
+const insertMonitoringQuery = () => {
+  userInput.value = "你好千问，请告诉我我什么时候玩手机了";
+  // 聚焦输入框并将光标移到末尾
+  const inputElement = document.querySelector('.chat-input');
+  if (inputElement) {
+    inputElement.focus();
+    inputElement.setSelectionRange(userInput.value.length, userInput.value.length);
   }
+};
+
+// 检查是否是监控记录查询
+const isMonitoringQuery = (text) => {
+  const possiblePrefixes = [
+    "你好千问", "你好千万", "你好前问", "你好钱问", "你好千汶", 
+    "你好前万", "你好乾问", "你好谦问", "你好浅问", "你好迁问",
+    "你好欠问", "你好倩问", "你好千闻", "你好千文", "你好钱文",
+    "你好千", "你好前", "你好钱", "你好欠", "你好浅"
+  ];
+  
+  const tellPhrases = ["请告诉我", "请告诉", "告诉我", "告诉"];
+  
+  // 检查是否以任何可能的前缀开头
+  const hasPrefix = possiblePrefixes.some(prefix => text.startsWith(prefix));
+  
+  // 检查是否包含任何请求短语
+  const hasTellPhrase = tellPhrases.some(phrase => text.includes(phrase));
+  
+  return hasPrefix && hasTellPhrase;
 };
 
 // 通过API发送音频数据到Whisper服务
@@ -189,8 +198,8 @@ const startAudioRecording = async () => {
     // 创建AudioContext
     audioContext.value = new (window.AudioContext || window.webkitAudioContext)();
     
-    // 创建MediaRecorder
-    mediaRecorder.value = new MediaRecorder(audioStream.value);
+    // 创建MediaRecorder，明确指定输出类型为 audio/webm;codecs=opus
+    mediaRecorder.value = new MediaRecorder(audioStream.value, { mimeType: 'audio/webm;codecs=opus' });
     audioChunks.value = [];
     
     // 收集音频数据
@@ -205,20 +214,8 @@ const startAudioRecording = async () => {
       // 合并音频块
       const audioBlob = new Blob(audioChunks.value, { type: 'audio/wav' });
       
-      // 发送到Whisper服务
-      if (whisperConnected.value && whisperWebSocket.value) {
-        // 将Blob转换为Base64
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        
-        reader.onloadend = () => {
-          const base64Audio = reader.result;
-          whisperWebSocket.value.send(base64Audio);
-        };
-      } else {
-        // 使用API替代WebSocket
-        await sendAudioToWhisperAPI(audioBlob);
-      }
+      // 发送到后端处理
+      await sendAudioMessage(audioBlob);
       
       // 清理AudioStream资源
       if (audioStream.value) {
@@ -226,39 +223,14 @@ const startAudioRecording = async () => {
       }
     };
     
-    // 每5秒发送一次音频数据（实时转录）
-    const sendInterval = 5000; // 5秒
-    let timerId;
-    
-    const sendAudioChunk = () => {
-      if (audioChunks.value.length > 0 && isRecording.value) {
-        const audioBlob = new Blob(audioChunks.value, { type: 'audio/wav' });
-        sendAudioToWhisperAPI(audioBlob);
-        // 保留最新的一部分数据，确保连贯性
-        audioChunks.value = audioChunks.value.slice(-5);
-      }
-    };
-    
-    timerId = setInterval(sendAudioChunk, sendInterval);
-    
     // 开始录制
-    mediaRecorder.value.start(100); // 每100ms收集数据
+    mediaRecorder.value.start(); // 开始录制，不再按时间分块
     isRecording.value = true;
     recognizedText.value = '';
     
-    // 清理定时器
-    mediaRecorder.value.onresume = () => {
-      if (!timerId) {
-        timerId = setInterval(sendAudioChunk, sendInterval);
-      }
-    };
-    
-    mediaRecorder.value.onpause = () => {
-      if (timerId) {
-        clearInterval(timerId);
-        timerId = null;
-      }
-    };
+    // 清理定时器相关逻辑
+    mediaRecorder.value.onresume = () => {};
+    mediaRecorder.value.onpause = () => {};
     
   } catch (error) {
     console.error('启动音频录制错误:', error);
@@ -292,9 +264,9 @@ const stopVoiceRecognition = () => {
     mediaRecorder.value.stop();
     isRecording.value = false;
     
-    if (recognizedText.value) {
-      userInput.value = recognizedText.value;
-    }
+    // 清空识别的文本和输入框，因为音频发送函数会处理显示
+    recognizedText.value = '';
+    userInput.value = '';
   }
 };
 
@@ -337,7 +309,104 @@ const speakMessage = (text, msgId) => {
   speechSynthesis.speak(speechUtterance);
 };
 
-// 发送消息
+// 标准化显示的用户输入（将各种变体统一为标准形式）
+const standardizeUserInput = (text) => {
+  const possiblePrefixes = [
+    "你好千万", "你好前问", "你好钱问", "你好千汶", 
+    "你好前万", "你好乾问", "你好谦问", "你好浅问", "你好迁问",
+    "你好欠问", "你好倩问", "你好千闻", "你好千文", "你好钱文",
+    "你好千", "你好前", "你好钱", "你好欠", "你好浅"
+  ];
+  
+  // 检查是否以任何可能的变体前缀开头
+  for (const prefix of possiblePrefixes) {
+    if (text.startsWith(prefix)) {
+      // 替换为标准形式
+      return text.replace(prefix, "你好千问");
+    }
+  }
+  
+  // 如果没有匹配到任何变体，返回原始文本
+  return text;
+};
+
+// 发送音频消息到后端
+const sendAudioMessage = async (audioBlob) => {
+  // 添加用户消息，显示"正在转录..."
+  const userTranscribingMessageId = Date.now();
+  messages.value.push({
+    id: userTranscribingMessageId,
+    sender: 'user',
+    text: '正在转录语音...'
+  });
+
+  startThinkingAnimation(); // 开始思考动画
+
+  try {
+    console.log("准备发送音频到后端服务器");
+    
+    // 创建FormData对象
+    const formData = new FormData();
+    formData.append('audio', audioBlob);
+    
+    console.log("发送请求到:", `${VOICE_SERVER_URL}/api/voice/process`);
+    
+    // 发送音频数据到后端处理
+    const response = await fetch(`${VOICE_SERVER_URL}/api/voice/process`, {
+      method: 'POST',
+      body: formData
+    });
+
+    console.log("收到响应状态:", response.status);
+    
+    if (!response.ok) {
+      throw new Error(`服务器返回错误: ${response.status}`);
+    }
+
+    const data = await response.json();
+    console.log("收到处理结果:", data);
+
+    stopThinkingAnimation(); // 停止思考动画
+
+    // 更新用户消息为识别的文本，并标准化显示
+    if (data.userText) {
+      // 标准化用户输入显示
+      const standardizedText = standardizeUserInput(data.userText);
+      
+      messages.value = messages.value.map(msg => 
+        msg.id === userTranscribingMessageId ? { ...msg, text: standardizedText } : msg
+      );
+      
+      // 添加AI回复
+      if (data.aiResponse) {
+        const aiMsgId = Date.now() + 1;
+        messages.value.push({
+          id: aiMsgId,
+          sender: 'ai',
+          text: data.aiResponse
+        });
+        
+        // 如果有音频URL，播放音频
+        if (data.audioUrl) {
+          const audio = new Audio(`${VOICE_SERVER_URL}${data.audioUrl}`);
+          audio.play();
+        }
+      }
+    } else {
+      throw new Error('语音识别失败');
+    }
+  } catch (error) {
+    stopThinkingAnimation(); // 停止思考动画
+    console.error('发送音频消息错误:', error);
+    messages.value.push({
+      id: Date.now() + 3,
+      sender: 'system',
+      text: `语音处理失败: ${error.message}`
+    });
+  }
+};
+
+// 发送消息 (原有的文本发送逻辑，现在也可能由语音识别结果触发)
 const sendMessage = async () => {
   if (userInput.value.trim()) {
     // 如果正在录音，先停止
@@ -345,31 +414,75 @@ const sendMessage = async () => {
       stopVoiceRecognition();
     }
     
-    // 添加用户消息到列表
+    // 获取用户输入并标准化显示
+    const originalInput = userInput.value.trim();
+    const standardizedInput = standardizeUserInput(originalInput);
+    
+    // 添加用户消息到列表（使用标准化后的文本显示）
     const userMessage = {
       id: Date.now(),
       sender: 'user',
-      text: userInput.value.trim()
+      text: standardizedInput
     };
     messages.value.push(userMessage);
     
-    const query = userInput.value.trim();
     userInput.value = ''; // 清空输入框
     
     // 开始显示思考动画
     startThinkingAnimation();
     
     try {
-      // 不再添加等待消息，使用思考动画代替
+      // 检查是否是监控记录查询
+      if (isMonitoringQuery(originalInput)) {
+        console.log("检测到监控记录查询:", originalInput);
+        
+        // 对于监控记录查询，直接发送到后端处理（使用原始输入，不使用标准化的文本）
+        const response = await fetch(`${VOICE_SERVER_URL}/api/chat/text`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            query: originalInput
+          })
+        });
+        
+        // 停止思考动画
+        stopThinkingAnimation();
+        
+        if (!response.ok) {
+          throw new Error(`服务器返回错误: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        // 添加AI回复
+        if (data && data.status === 'success') {
+          const aiMsgId = Date.now() + 2;
+          messages.value.push({
+            id: aiMsgId,
+            sender: 'ai',
+            text: data.answer
+          });
+          
+          // 自动朗读AI回复
+          speakMessage(data.answer, aiMsgId);
+        } else {
+          throw new Error('服务器返回错误数据');
+        }
+        
+        return;
+      }
       
-      // 使用意图检测API替代原有的搜索API
-      const response = await fetch(`${RAG_SERVER_URL}/detect_intent/`, {
+      // 如果不是监控记录查询，则使用RAG服务器（使用原始输入，不使用标准化的文本）
+      const response = await fetch(`${RAG_SERVER_URL}/search/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          query: query
+          query: originalInput,
+          k: 3
         })
       });
       
@@ -433,6 +546,20 @@ const checkConnection = async () => {
         sender: 'system',
         text: '已连接到智能问答系统，请输入您的问题。'
       });
+      
+      // 检查响应内容，看是否包含API错误信息
+      try {
+        const data = await response.json();
+        if (data.answer && (data.answer.includes("API调用失败") || data.answer.includes("503错误"))) {
+          messages.value.push({
+            id: Date.now() + 1,
+            sender: 'system',
+            text: '警告：大语言模型API连接异常，系统将使用监控记录直接回答，可能影响回答质量。'
+          });
+        }
+      } catch (e) {
+        console.error('解析响应数据失败:', e);
+      }
     } else {
       throw new Error('服务器状态异常');
     }
@@ -444,6 +571,9 @@ const checkConnection = async () => {
       sender: 'system',
       text: '无法连接到智能问答系统，请检查服务器状态。'
     });
+    
+    // 添加更详细的错误信息
+    console.error('详细错误:', error);
   }
 };
 
@@ -457,10 +587,143 @@ const getSenderName = (sender) => {
   }
 };
 
+// 从预警面板同步数据到监控系统
+const syncAlertDataToMonitoring = async () => {
+  try {
+    // 获取预警面板中的所有警报项
+    const alertItems = document.querySelectorAll('.alert-item');
+    if (!alertItems || alertItems.length === 0) {
+      console.log("未找到预警面板数据");
+      return;
+    }
+    
+    const records = [];
+    
+    // 遍历所有警报项
+    alertItems.forEach(item => {
+      try {
+        // 获取时间戳
+        const timestampEl = item.querySelector('.alert-timestamp');
+        const messageEl = item.querySelector('.alert-message');
+        const timeRangeEl = item.querySelector('.alert-time-range');
+        
+        if (!timestampEl || !messageEl) return;
+        
+        const timestamp = timestampEl.textContent.trim();
+        let message = messageEl.textContent.trim();
+        
+        // 解析活动类型和持续时间
+        let activity = message;
+        let duration = null;
+        
+        // 检查是否包含持续时间信息 (格式: "活动：时长")
+        if (message.includes('：')) {
+          const parts = message.split('：');
+          activity = parts[0].trim();
+          if (parts[1]) {
+            const durationPart = parts[1].trim();
+            // 提取持续时间，格式可能是 "1.6分钟" 或 "1.6分钟 其他文本"
+            const durationMatch = durationPart.match(/^([\d\.]+分钟)/);
+            if (durationMatch) {
+              duration = durationMatch[1];
+            }
+          }
+        }
+        
+        // 解析时间范围
+        let startTime = timestamp;
+        let endTime = null;
+        
+        if (timeRangeEl) {
+          const timeRange = timeRangeEl.textContent.trim();
+          // 匹配时间范围格式 "HH:MM:SS - HH:MM:SS" 或 "HH:MM - HH:MM"
+          const rangeMatch = timeRange.match(/(\d{1,2}:\d{1,2}(?::\d{1,2})?)\s*[-—–]\s*(\d{1,2}:\d{1,2}(?::\d{1,2})?)/);
+          if (rangeMatch) {
+            startTime = rangeMatch[1];
+            endTime = rangeMatch[2];
+          }
+        }
+        
+        // 创建记录
+        records.push({
+          activity: activity,
+          start_time: startTime,
+          end_time: endTime,
+          duration: duration,
+          date: new Date().toISOString().split('T')[0]
+        });
+        
+      } catch (err) {
+        console.error('解析警报项时出错:', err);
+      }
+    });
+    
+    if (records.length > 0) {
+      console.log("从预警面板解析到的记录:", records);
+      
+      // 发送到后端
+      const response = await fetch(`${VOICE_SERVER_URL}/api/monitoring/update`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          records: records
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`服务器返回错误: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      
+      if (result.status === 'success') {
+        console.log(`监控数据同步成功，更新了 ${result.count || records.length} 条记录`);
+      } else {
+        throw new Error(result.message || '同步监控数据失败');
+      }
+    }
+  } catch (error) {
+    console.error('同步预警数据到监控系统时出错:', error);
+    // 不再显示错误消息，避免干扰用户
+  }
+};
+
+// 自动同步定时器
+let syncIntervalId = null;
+
+// 开始自动同步
+const startAutoSync = () => {
+  // 先执行一次同步
+  syncAlertDataToMonitoring();
+  
+  // 设置定时器，每30秒自动同步一次
+  syncIntervalId = setInterval(() => {
+    console.log("执行自动同步...");
+    syncAlertDataToMonitoring();
+  }, 30000); // 30秒
+  
+  console.log("自动同步已启动");
+};
+
+// 停止自动同步
+const stopAutoSync = () => {
+  if (syncIntervalId) {
+    clearInterval(syncIntervalId);
+    syncIntervalId = null;
+    console.log("自动同步已停止");
+  }
+};
+
 // 组件挂载时检查连接
 onMounted(() => {
   checkConnection();
-  initWhisperWebSocket();
+  
+  // 启动自动同步
+  setTimeout(() => {
+    startAutoSync();
+  }, 2000); // 延迟2秒，确保预警面板已加载
 });
 
 // 组件卸载时清理资源
@@ -473,13 +736,12 @@ onUnmounted(() => {
     audioStream.value.getTracks().forEach(track => track.stop());
   }
   
-  if (whisperWebSocket.value) {
-    whisperWebSocket.value.close();
-  }
-  
   if (isSpeaking.value) {
     speechSynthesis.cancel();
   }
+  
+  // 停止自动同步
+  stopAutoSync();
 });
 
 // 监听消息变化，自动滚动到底部
@@ -523,6 +785,55 @@ function stopThinkingAnimation() {
   isThinking.value = false;
   thinkingDots.value = "";
 }
+
+// 添加到知识库
+const addToKnowledgeBase = async (text) => {
+  try {
+    const response = await fetch(`${RAG_SERVER_URL}/add_text/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        docs: [text],
+        table_name: 'user_added'
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('添加失败');
+    }
+
+    const result = await response.json();
+    if (result.status === 'success') {
+      messages.value.push({
+        id: Date.now(),
+        sender: 'system',
+        text: '已成功添加到知识库'
+      });
+    } else {
+      throw new Error(result.message || '添加失败');
+    }
+  } catch (error) {
+    console.error('添加到知识库失败:', error);
+    messages.value.push({
+      id: Date.now(),
+      sender: 'system',
+      text: `添加到知识库失败: ${error.message}`
+    });
+  }
+};
+
+// 切换模式
+const toggleMode = (mode) => {
+  currentMode.value = mode;
+};
+
+// 清除聊天记录
+const clearChat = () => {
+  messages.value = [];
+  userInput.value = '';
+};
 </script>
 
 <style scoped>
@@ -600,22 +911,27 @@ function stopThinkingAnimation() {
 
 .message-actions {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 5px;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 .action-button {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px 5px;
+  padding: 4px;
   font-size: 16px;
   opacity: 0.6;
-  transition: opacity 0.2s;
+  transition: opacity 0.3s;
 }
 
 .action-button:hover {
   opacity: 1;
+}
+
+.action-button.speaking {
+  opacity: 1;
+  color: var(--primary);
 }
 
 .speak-button {
@@ -1208,5 +1524,139 @@ function stopThinkingAnimation() {
 /* 调整消息容器排列，确保AI消息靠左 */
 .chat-message-container:not(.user-message) {
   justify-content: flex-start;
+}
+
+/* 添加监控记录查询提示样式 */
+.monitoring-hint {
+  position: absolute;
+  bottom: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(16, 45, 80, 0.7);
+  border: 1px solid rgba(79, 209, 197, 0.5);
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  z-index: 5;
+  max-width: 90%;
+}
+
+.monitoring-hint:hover {
+  background: rgba(16, 45, 80, 0.9);
+  border-color: rgba(79, 209, 197, 0.8);
+  transform: translateX(-50%) translateY(-2px);
+}
+
+.hint-icon {
+  font-size: 18px;
+  color: var(--primary, #4fd1c5);
+}
+
+.hint-text {
+  font-size: 0.85em;
+  color: #e6f1ff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 当输入框获得焦点时隐藏提示 */
+.chat-input:focus + .monitoring-hint {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+  .monitoring-hint {
+    bottom: 60px;
+    padding: 6px 10px;
+  }
+  
+  .hint-text {
+    font-size: 0.75em;
+  }
+}
+
+/* 监控面板样式 */
+
+/* 模式切换按钮样式 */
+.mode-switch {
+  display: flex;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.mode-btn {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+}
+
+.ai-btn {
+  background: rgba(128, 90, 213, 0.2);
+  border: 1px solid rgba(128, 90, 213, 0.5);
+  color: rgba(230, 241, 255, 0.9);
+}
+
+.ai-btn:hover {
+  background: rgba(128, 90, 213, 0.3);
+  box-shadow: 0 0 8px rgba(128, 90, 213, 0.3);
+}
+
+.ai-btn.active {
+  background: linear-gradient(135deg, #6a5acd 0%, #9370db 100%);
+  border-color: #6a5acd;
+  color: white;
+  font-weight: 500;
+  box-shadow: 0 0 8px rgba(128, 90, 213, 0.5);
+}
+
+.monitoring-btn {
+  background: rgba(79, 209, 197, 0.2);
+  border: 1px solid rgba(79, 209, 197, 0.5);
+  color: rgba(230, 241, 255, 0.9);
+}
+
+.monitoring-btn:hover {
+  background: rgba(79, 209, 197, 0.3);
+  box-shadow: 0 0 8px rgba(79, 209, 197, 0.3);
+}
+
+.monitoring-btn.active {
+  background: linear-gradient(135deg, #4fd1c5 0%, #38b2ac 100%);
+  border-color: #4fd1c5;
+  color: white;
+  font-weight: 500;
+  box-shadow: 0 0 8px rgba(79, 209, 197, 0.5);
+}
+
+.mode-btn.clear-btn {
+  background: rgba(255, 77, 77, 0.1);
+  border: 1px solid rgba(255, 77, 77, 0.3);
+  color: rgba(255, 77, 77, 0.8);
+}
+
+.mode-btn.clear-btn:hover {
+  background: rgba(255, 77, 77, 0.2);
+  border-color: rgba(255, 77, 77, 0.5);
+  color: rgba(255, 77, 77, 1);
+}
+
+/* 面板标题布局调整 */
+.panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 </style> 

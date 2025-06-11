@@ -1,0 +1,7 @@
+fastapi==0.109.2
+uvicorn==0.27.1
+python-multipart==0.0.9
+SpeechRecognition==3.10.1
+edge-tts==6.1.9
+requests==2.31.0
+python-dotenv==1.0.1 

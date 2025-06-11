@@ -14,6 +14,7 @@
       <!-- 使用 router-link 进行页面导航 -->
       <router-link v-if="$route.path !== '/behavior'" to="/behavior" class="status-bar-btn">行为分析</router-link>
       <router-link v-if="$route.path === '/behavior'" to="/" class="status-bar-btn">返回监控</router-link>
+      <router-link to="/voice" class="status-bar-btn">智能语音</router-link>
     </div>
   </div>
 </template>

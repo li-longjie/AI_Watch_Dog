@@ -1,0 +1,39 @@
+{
+  "records": [
+    {
+      "activity": "专注工作学习",
+      "start_time": "18:12:41",
+      "end_time": null,
+      "duration": null,
+      "date": "2025-06-11"
+    },
+    {
+      "activity": "睡觉",
+      "start_time": "18:11:51",
+      "end_time": null,
+      "duration": null,
+      "date": "2025-06-11"
+    },
+    {
+      "activity": "专注工作学习",
+      "start_time": "17:56:43",
+      "end_time": "18:09:34",
+      "duration": "12.8分钟",
+      "date": "2025-06-11"
+    },
+    {
+      "activity": "玩手机",
+      "start_time": "17:55:39",
+      "end_time": null,
+      "duration": null,
+      "date": "2025-06-11"
+    },
+    {
+      "activity": "专注工作学习",
+      "start_time": "17:52:57",
+      "end_time": "17:54:43",
+      "duration": "1.8分钟",
+      "date": "2025-06-11"
+    }
+  ]
+}

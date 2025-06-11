@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import MonitoringPage from '../views/MonitoringPage.vue' // 我们稍后会创建这个文件
 import BehaviorAnalysisPage from '../views/BehaviorAnalysisPage.vue' // 我们稍后会创建这个文件
+import VoiceConversation from '../components/VoiceConversation.vue' // 导入语音对话组件
 
 const routes = [
   {
@@ -17,6 +18,11 @@ const routes = [
     path: '/behavior-analysis',
     name: 'behavior-analysis',
     component: BehaviorAnalysisPage
+  },
+  {
+    path: '/voice', // 添加语音对话路由
+    name: 'VoiceConversation',
+    component: VoiceConversation
   }
   // 未来可以添加更多路由
 ]

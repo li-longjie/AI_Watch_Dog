@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ASR and LLM Output</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 0;
+        display: flex; /* 启用 Flexbox 布局 */
+        height: 100vh; /* 使主容器占满整个视口高度 */
+        overflow: hidden; /* 防止整体滚动条 */
+      }
+      #left-panel {
+        width: 250px; /* 左侧面板宽度 */
+        background-color: #f0f0f0; /* 背景色 */
+        padding: 15px;
+        overflow-y: auto; /* 如果内容过多，左侧面板可滚动 */
+        border-right: 1px solid #ccc;
+        box-sizing: border-box; /* 将 padding 和 border 包含在宽度内 */
+      }
+      #right-panel {
+        flex-grow: 1; /* 右侧面板占据剩余空间 */
+        display: flex; /* 启用 Flexbox 布局 */
+        flex-direction: column; /* 子元素垂直排列 */
+        padding: 15px;
+        overflow-y: auto; /* 如果内容过多，右侧面板可滚动 */
+      }
+      #chat-log {
+        flex-grow: 1; /* 聊天记录区域占据剩余空间 */
+        overflow-y: auto; /* 使聊天记录区域可滚动 */
+      }
+      .dialogue-item {
+        margin-bottom: 15px; /* 对话条目之间的间距 */
+        display: flex; /* 启用 Flexbox 布局 */
+        flex-direction: column; /* 使内部的 ASR 和 Answer 垂直排列 */
+      }
+      .asr-bubble,
+      .answer-bubble {
+        padding: 10px 15px; /* 气泡内边距 */
+        border-radius: 15px; /* 气泡圆角 */
+        max-width: 70%; /* 气泡最大宽度 */
+        word-wrap: break-word; /* 文本换行 */
+      }
+      .asr-bubble {
+        background-color: #e9e9eb; /* ASR 气泡背景色改为浅灰色 */
+        align-self: flex-start; /* ASR 气泡靠左对齐 */
+        margin-left: 0; /* 移除左侧自动外边距 */
+        margin-right: auto; /* ASR 气泡靠左对齐 */
+      }
+      .answer-bubble {
+        background-color: #dcf8c6; /* Answer 气泡背景色 */
+        align-self: flex-start; /* Answer 气泡靠左对齐 */
+        margin-right: auto; /* Answer 气泡靠左对齐 */
+      }
+      .dialogue-item p {
+        margin: 5px 0; /* 气泡内部段落的间距 */
+      }
+      /* 隐藏之前的 output-container 相关的样式 */
+      #output-container {
+        display: none;
+      }
+      strong {
+        margin-right: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="left-panel">
+      <h2>历史会话</h2>
+      <ul id="history-list"></ul>
+      <!-- 历史会话列表将在这里 -->
+      <p id="history-placeholder"></p>
+    </div>
+
+    <div id="right-panel">
+      <h1>当前实时对话</h1>
+      <div id="chat-log">
+        <!-- 对话记录将在这里动态添加 -->
+        <p>请从左侧选择一个历史会话或开始新的对话。</p>
+      </div>
+    </div>
+
+    <script>
+      const chatLog = document.getElementById("chat-log");
+      const historyList = document.getElementById("history-list");
+      const historyPlaceholder = document.getElementById("history-placeholder");
+
+      // 函数：加载并显示特定历史对话内容
+      function loadConversation(filename) {
+        fetch(`./output/${filename}`)
+          .then((response) => {
+            if (!response.ok) {
+              console.error(`无法加载对话文件: ${filename}`, response.status);
+              chatLog.innerHTML = "<p>加载对话失败。</p>";
+              return null;
+            }
+            return response.json();
+          })
+          .then((conversationHistory) => {
+            if (Array.isArray(conversationHistory)) {
+              chatLog.innerHTML = ""; // 清空现有内容
+
+              if (conversationHistory.length === 0) {
+                chatLog.innerHTML = "<p>此会话没有内容。</p>";
+              } else {
+                conversationHistory.forEach((dialogue) => {
+                  if (dialogue.asr_out && dialogue.answer) {
+                    const asrBubble = document.createElement("div");
+                    asrBubble.classList.add("dialogue-item", "asr-bubble");
+                    asrBubble.innerHTML = `<strong>ASR 输出:</strong> <span>${dialogue.asr_out}</span>`;
+                    chatLog.appendChild(asrBubble);
+
+                    const answerBubble = document.createElement("div");
+                    answerBubble.classList.add(
+                      "dialogue-item",
+                      "answer-bubble"
+                    );
+                    answerBubble.innerHTML = `<strong>Answer:</strong> <span>${dialogue.answer}</span>`;
+                    chatLog.appendChild(answerBubble);
+                  }
+                });
+                // 滚动到底部 (可选)
+                // chatLog.scrollTop = chatLog.scrollHeight;
+              }
+            } else {
+              console.error(
+                `对话文件格式不正确: ${filename}`,
+                conversationHistory
+              );
+              chatLog.innerHTML = "<p>对话文件格式错误。</p>";
+            }
+          })
+          .catch((error) => {
+            console.error(`获取或解析对话文件时出错: ${filename}`, error);
+            chatLog.innerHTML = "<p>加载对话文件时发生错误。</p>";
+          });
+      }
+
+      // 函数：加载并显示历史会话列表
+      function fetchHistoryList() {
+        fetch("./output/history_list.json")
+          .then((response) => {
+            if (!response.ok) {
+              console.warn("无法读取 history_list.json 文件:", response.status);
+              historyList.innerHTML = ""; // 清空列表
+              historyPlaceholder.textContent = "无法加载历史会话列表。";
+              return null;
+            }
+            return response.json();
+          })
+          .then((fileList) => {
+            historyList.innerHTML = ""; // 清空现有列表项
+            historyPlaceholder.textContent = ""; // 移除占位符
+
+            if (Array.isArray(fileList) && fileList.length > 0) {
+              fileList.forEach((filename) => {
+                const listItem = document.createElement("li");
+                // 可以美化一下文件名，例如移除后缀或者格式化日期
+                listItem.textContent = filename
+                  .replace("conversation_", "")
+                  .replace(".json", "");
+                listItem.style.cursor = "pointer"; // 添加手型光标表示可点击
+                listItem.style.marginBottom = "5px";
+                listItem.addEventListener("click", () => {
+                  loadConversation(filename);
+                });
+                historyList.appendChild(listItem);
+              });
+            } else {
+              historyPlaceholder.textContent = "没有历史会话记录。";
+            }
+          })
+          .catch((error) => {
+            console.error("获取或解析 history_list.json 时出错:", error);
+            historyList.innerHTML = ""; // 清空列表
+            historyPlaceholder.textContent = "加载历史会话列表失败。";
+          });
+      }
+
+      // 每隔一段时间更新历史会话列表 (例如 5 秒)
+      setInterval(fetchHistoryList, 5000);
+
+      // 页面加载完成后立即获取一次历史会话列表
+      fetchHistoryList();
+
+      // 注意：实时对话的更新逻辑已移除或需重新实现。
+      // 如果您希望在加载历史对话后，仍然能看到当前正在进行的对话并追加，
+      // 需要修改 Python 脚本使其也写入一个固定的文件（如 output.json）表示当前会话，
+      // 或者通过其他方式（如 WebSocket）将实时数据发送到前端。
+      // 目前的实现只支持加载和浏览历史文件。
+    </script>
+  </body>
+</html>
