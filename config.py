@@ -5,6 +5,11 @@
 from typing import Dict, Any
 import logging
 import os
+from dotenv import load_dotenv
+
+# 在脚本的最开始加载 .env 文件
+# 这会把 .env 文件中的键值对加载到环境变量中
+load_dotenv()
 
 # 视频源配置
 class VideoConfig:

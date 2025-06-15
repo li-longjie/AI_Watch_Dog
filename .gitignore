@@ -99,3 +99,8 @@ __pycache__/
 
 # 配置文件 (重要)
 config.py
+secrets.txt
+.env
+
+# BFG (Git历史清理工具)
+*.bfg-report/
