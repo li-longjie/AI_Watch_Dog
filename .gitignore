@@ -34,6 +34,10 @@ htmlcov/
 .pytest_cache/
 code.log
 
+# Test output
+/test_results/
+/test_screenshots/
+
 # 视频文件
 *.mp4
 *.avi
@@ -69,3 +73,29 @@ passwords.txt
 # 不忽略的文件
 !requirements.txt
 !readme.md
+
+# 字节码和缓存文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 数据库和数据文件
+*.db
+*.sqlite3
+*.jsonl
+
+# 项目生成的数据目录 (非常重要)
+/screen_recordings/
+/chroma_db/
+/chroma_db_activity/
+/received_audio/
+/video_warning/
+/video_chroma_db/
+
+# 依赖项和打包
+*.zip
+*.jar
+
+# 配置文件 (重要)
+config.py

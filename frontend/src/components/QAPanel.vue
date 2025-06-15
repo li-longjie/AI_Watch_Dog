@@ -2,9 +2,45 @@
   <div class="qa-panel-container">
     <div class="panel-title">
       <div class="status-indicator" :class="{ 'connected': isConnected }"></div>
-      <span>AI智能体</span>
+      <span>{{ currentMode === 'rag' ? 'AI智能体' : '桌面活动助手' }}</span>
+      <div class="mode-switch">
+        <button @click="switchMode('rag')" :class="{ 'active': currentMode === 'rag' }" class="mode-btn">
+          🤖 AI问答
+        </button>
+        <button @click="switchMode('activity')" :class="{ 'active': currentMode === 'activity' }" class="mode-btn">
+          🖥️ 活动检索
+        </button>
+        <button @click="clearChat" class="mode-btn clear-btn" title="清除对话">
+          🗑️ 清除
+        </button>
+      </div>
     </div>
     <div class="qa-content">
+      <!-- 快速问题建议 -->
+      <div v-if="shouldShowQuickQuestions" class="quick-questions">
+        <div class="quick-questions-title">💡 试试这些问题：</div>
+        <div class="question-buttons">
+          <button @click="sendQuickQuestion('过去30分钟我浏览了什么网页？')" class="quick-question-btn">
+            🌐 过去30分钟浏览的网页
+          </button>
+          <button @click="sendQuickQuestion('我昨天主要使用了哪些应用？')" class="quick-question-btn">
+            📱 昨天使用的应用
+          </button>
+          <button @click="sendQuickQuestion('最近1小时我在做什么？')" class="quick-question-btn">
+            ⏰ 最近1小时的活动
+          </button>
+          <button @click="sendQuickQuestion('我今天上午做了什么工作？')" class="quick-question-btn">
+            💼 今天上午的工作
+          </button>
+          <button @click="sendQuickQuestion('过去10分钟我点击了什么？')" class="quick-question-btn">
+            🖱️ 最近的点击操作
+          </button>
+          <button @click="sendQuickQuestion('我使用Chrome浏览器做了什么？')" class="quick-question-btn">
+            🌏 Chrome浏览活动
+          </button>
+        </div>
+      </div>
+      
       <div class="chat-history" ref="chatHistoryRef">
         <div v-for="msg in filteredMessages" :key="msg.id" class="chat-message-container" :class="{ 'user-message': msg.sender === 'user' }">
           <div class="avatar" :class="msg.sender">
@@ -44,8 +80,9 @@
       </div>
       <div class="input-hint"></div>
     </div>
+    
     <div class="chat-input-area">
-      <input type="text" v-model="userInput" @keyup.enter="sendMessage" placeholder="输入您的问题..." class="chat-input">
+      <input type="text" v-model="userInput" @keyup.enter="sendMessage" :placeholder="currentMode === 'rag' ? '输入您的问题...' : '问我关于您的桌面活动，如：过去30分钟我浏览了什么网页？'" class="chat-input">
       <button @click="toggleVoiceRecognition" class="voice-button" :class="{ 'recording': isRecording }" title="语音输入">
         <span v-if="isRecording">🎙️</span>
         <span v-else>🎤</span>
@@ -79,6 +116,10 @@ const isSpeaking = ref(false);
 const currentSpeakingId = ref(null);
 const isThinking = ref(false);
 const thinkingDots = ref("");
+const systemStats = ref(null);
+const currentMode = ref('rag'); // 'rag' 或 'activity'
+const ragConnected = ref(false);
+const activityConnected = ref(false);
 
 // 语音识别相关
 const audioContext = ref(null);
@@ -90,13 +131,25 @@ const whisperConnected = ref(false);
 const WHISPER_SERVER_URL = 'ws://localhost:8086/ws/';
 const WHISPER_API_URL = 'http://localhost:8086/transcribe_chunk/';
 
-// RAG服务器地址
-const RAG_SERVER_URL = 'http://localhost:8085';
+// 活动检索服务器地址
+const RAG_SERVER_URL = 'http://localhost:8085';  // RAG智能问答服务器
+const ACTIVITY_SERVER_URL = 'http://localhost:5001';
 
 // 过滤掉系统连接消息
 const filteredMessages = computed(() => {
   return messages.value.filter(msg => 
     !(msg.sender === 'system' && msg.text.includes('已连接到智能问答系统')));
+});
+
+// 计算是否应该显示快速问题建议
+const shouldShowQuickQuestions = computed(() => {
+  if (currentMode.value !== 'activity') return false;
+  
+  // 只有系统消息时显示快速问题
+  const userMessages = messages.value.filter(msg => msg.sender === 'user');
+  const aiMessages = messages.value.filter(msg => msg.sender === 'ai');
+  
+  return userMessages.length === 0 && aiMessages.length === 0;
 });
 
 // 获取头像图标
@@ -360,18 +413,31 @@ const sendMessage = async () => {
     startThinkingAnimation();
     
     try {
-      // 不再添加等待消息，使用思考动画代替
+      let response, data;
       
-      // 使用意图检测API替代原有的搜索API
-      const response = await fetch(`${RAG_SERVER_URL}/detect_intent/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          query: query
-        })
-      });
+      if (currentMode.value === 'activity') {
+        // 使用活动查询API
+        response = await fetch(`${ACTIVITY_SERVER_URL}/api/query`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            message: query
+          })
+        });
+      } else {
+        // 使用RAG智能问答API（使用detect_intent接口）
+        response = await fetch(`${RAG_SERVER_URL}/detect_intent/`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            query: query
+          })
+        });
+      }
       
       // 停止思考动画
       stopThinkingAnimation();
@@ -380,71 +446,154 @@ const sendMessage = async () => {
         throw new Error(`服务器返回错误: ${response.status}`);
       }
       
-      const data = await response.json();
+      data = await response.json();
+      
+      // 根据模式处理不同的响应格式
+      let responseText = '';
+      if (currentMode.value === 'activity') {
+        if (data && data.result) {
+          responseText = data.result;
+        } else {
+          throw new Error('桌面活动服务器返回错误数据');
+        }
+      } else {
+        if (data && data.status === 'success') {
+          responseText = data.answer;
+        } else {
+          throw new Error('RAG服务器返回错误数据');
+        }
+      }
       
       // 添加AI回复
-      if (data && data.status === 'success') {
-        const aiMsgId = Date.now() + 2;
-        messages.value.push({
-          id: aiMsgId,
-          sender: 'ai',
-          text: data.answer
-        });
-        
-        // 自动朗读AI回复
-        speakMessage(data.answer, aiMsgId);
-      } else {
-        throw new Error('服务器返回错误数据');
-      }
+      const aiMsgId = Date.now() + 2;
+      messages.value.push({
+        id: aiMsgId,
+        sender: 'ai',
+        text: responseText
+      });
+      
+      // 自动朗读AI回复
+      speakMessage(responseText, aiMsgId);
     } catch (error) {
       // 停止思考动画
       stopThinkingAnimation();
       
       console.error('发送消息错误:', error);
       
+      let errorMessage = '抱歉，无法处理您的请求。';
+      
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        errorMessage = '🔌 无法连接到桌面活动服务器，请确保：\n• activity_ui.py 正在运行\n• 服务器地址为 http://localhost:5001\n• 网络连接正常';
+      } else if (error.message.includes('500')) {
+        errorMessage = '⚠️ 服务器内部错误，可能原因：\n• 向量数据库未初始化\n• 活动数据尚未加载\n• 请稍后重试';
+      } else if (error.message.includes('404')) {
+        errorMessage = '❌ API端点不存在，请检查服务器版本是否正确';
+      } else {
+        errorMessage = `❌ 发生未知错误：${error.message}`;
+      }
+      
       messages.value.push({
         id: Date.now() + 3,
         sender: 'system',
-        text: '无法发送消息，请检查连接。'
+        text: errorMessage
       });
     }
   }
 };
 
 // 检查RAG服务器连接
-const checkConnection = async () => {
+const checkRAGConnection = async () => {
   try {
-    // 尝试连接RAG服务器
-    const response = await fetch(`${RAG_SERVER_URL}/search/`, {
+    const response = await fetch(`${RAG_SERVER_URL}/detect_intent/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        query: "测试连接",
-        k: 1
+        query: "测试连接"
       })
     });
     
     if (response.ok) {
-      isConnected.value = true;
-      messages.value.push({
-        id: Date.now(),
-        sender: 'system',
-        text: '已连接到智能问答系统，请输入您的问题。'
-      });
+      ragConnected.value = true;
+      return true;
     } else {
-      throw new Error('服务器状态异常');
+      ragConnected.value = false;
+      return false;
     }
   } catch (error) {
-    console.error('连接RAG服务器失败:', error);
-    isConnected.value = false;
-    messages.value.push({
-      id: Date.now(),
-      sender: 'system',
-      text: '无法连接到智能问答系统，请检查服务器状态。'
-    });
+    ragConnected.value = false;
+    return false;
   }
+};
+
+// 检查活动检索服务器连接
+const checkActivityConnection = async () => {
+  try {
+    const response = await fetch(`${ACTIVITY_SERVER_URL}/api/query`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        message: "测试连接"
+      })
+    });
+    
+    if (response.ok) {
+      activityConnected.value = true;
+      // 获取系统统计信息
+      await getSystemStats();
+      return true;
+    } else {
+      activityConnected.value = false;
+      return false;
+    }
+  } catch (error) {
+    activityConnected.value = false;
+    return false;
+  }
+};
+
+// 检查所有服务器连接
+const checkConnection = async () => {
+  const ragStatus = await checkRAGConnection();
+  const activityStatus = await checkActivityConnection();
+  
+  // 根据当前模式设置连接状态
+  if (currentMode.value === 'rag') {
+    isConnected.value = ragStatus;
+  } else {
+    isConnected.value = activityStatus;
+  }
+  
+  // 构建欢迎消息
+  let welcomeMessage = '🔌 系统连接状态：\n\n';
+  
+  if (ragStatus) {
+    welcomeMessage += '✅ AI智能问答系统：已连接\n';
+  } else {
+    welcomeMessage += '❌ AI智能问答系统：连接失败\n';
+  }
+  
+  if (activityStatus) {
+    welcomeMessage += '✅ 桌面活动检索系统：已连接\n';
+    
+    if (systemStats.value && systemStats.value.hasData) {
+      const lastActivityTime = new Date(systemStats.value.latestActivity).toLocaleString('zh-CN');
+      welcomeMessage += `   • 最新记录时间：${lastActivityTime}\n`;
+    }
+  } else {
+    welcomeMessage += '❌ 桌面活动检索系统：连接失败\n';
+  }
+  
+  welcomeMessage += '\n💡 使用上方按钮切换不同的检索模式！';
+  
+  messages.value.push({
+    id: Date.now(),
+    sender: 'system',
+    text: welcomeMessage
+  });
 };
 
 // 获取发送者名称
@@ -523,6 +672,78 @@ function stopThinkingAnimation() {
   isThinking.value = false;
   thinkingDots.value = "";
 }
+
+// 设置快速问题
+const setQuickQuestion = (question) => {
+  userInput.value = question;
+};
+
+// 发送快速问题
+const sendQuickQuestion = async (question) => {
+  userInput.value = question;
+  await sendMessage();
+};
+
+// 获取系统统计信息
+const getSystemStats = async () => {
+  try {
+    const response = await fetch(`${ACTIVITY_SERVER_URL}/api/activity_records?limit=1`);
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.length > 0) {
+        const latestRecord = data[0];
+        systemStats.value = {
+          hasData: true,
+          latestActivity: latestRecord.timestamp,
+          recordCount: 'N/A' // 如果后端支持，可以添加总记录数API
+        };
+      } else {
+        systemStats.value = {
+          hasData: false,
+          message: '尚无活动记录'
+        };
+      }
+    }
+  } catch (error) {
+    console.log('获取系统统计信息失败:', error);
+  }
+};
+
+// 添加模式选择功能
+const switchMode = (mode) => {
+  currentMode.value = mode;
+  
+  // 更新连接状态指示器
+  if (mode === 'rag') {
+    isConnected.value = ragConnected.value;
+  } else {
+    isConnected.value = activityConnected.value;
+  }
+  
+  // 添加模式切换提示
+  const modeNames = {
+    rag: 'AI智能问答',
+    activity: '桌面活动检索'
+  };
+  
+  messages.value.push({
+    id: Date.now(),
+    sender: 'system',
+    text: `🔄 已切换到 ${modeNames[mode]} 模式`
+  });
+};
+
+// 清除聊天记录
+const clearChat = () => {
+  // 只保留系统连接消息
+  messages.value = messages.value.filter(msg => 
+    msg.sender === 'system' && (
+      msg.text.includes('系统连接状态') || 
+      msg.text.includes('已连接到桌面活动检索系统') ||
+      msg.text.includes('已连接到智能问答系统')
+    )
+  );
+};
 </script>
 
 <style scoped>
@@ -1208,5 +1429,148 @@ function stopThinkingAnimation() {
 /* 调整消息容器排列，确保AI消息靠左 */
 .chat-message-container:not(.user-message) {
   justify-content: flex-start;
+}
+
+/* 快速问题建议样式 */
+.quick-questions {
+  padding: 12px;
+  margin: 5px 0 10px 0;
+  background: linear-gradient(145deg, rgba(16, 45, 80, 0.3), rgba(79, 209, 197, 0.1));
+  border: 1px solid rgba(79, 209, 197, 0.2);
+  border-radius: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.quick-questions::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyber-neon), transparent);
+  animation: scanLine 3s infinite;
+}
+
+@keyframes scanLine {
+  0% { left: -100%; }
+  100% { left: 100%; }
+}
+
+.quick-questions-title {
+  color: var(--primary, #4fd1c5);
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-bottom: 8px;
+  text-align: center;
+  text-shadow: 0 0 3px rgba(79, 209, 197, 0.3);
+}
+
+.question-buttons {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px;
+}
+
+.quick-question-btn {
+  padding: 6px 10px;
+  background: linear-gradient(135deg, 
+    rgba(128, 90, 213, 0.1), 
+    rgba(79, 209, 197, 0.1));
+  color: rgba(230, 241, 255, 0.9);
+  border: 1px solid rgba(128, 90, 213, 0.3);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  text-align: left;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.quick-question-btn:hover {
+  background: linear-gradient(135deg, 
+    rgba(128, 90, 213, 0.2), 
+    rgba(79, 209, 197, 0.2));
+  border-color: rgba(79, 209, 197, 0.5);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(79, 209, 197, 0.2);
+}
+
+.quick-question-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(79, 209, 197, 0.3);
+}
+
+.quick-question-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, 
+    transparent, 
+    rgba(79, 209, 197, 0.1), 
+    transparent);
+  transition: left 0.5s ease;
+}
+
+.quick-question-btn:hover::before {
+  left: 100%;
+}
+
+/* 模式切换按钮样式 */
+.mode-switch {
+  display: flex;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.mode-btn {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  border: 1px solid rgba(128, 90, 213, 0.3);
+  background: rgba(128, 90, 213, 0.1);
+  color: rgba(230, 241, 255, 0.7);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+}
+
+.mode-btn:hover {
+  background: rgba(128, 90, 213, 0.2);
+  border-color: rgba(128, 90, 213, 0.5);
+  color: rgba(230, 241, 255, 0.9);
+}
+
+.mode-btn.active {
+  background: linear-gradient(135deg, var(--primary, #4fd1c5) 0%, var(--cyber-blue, #0088ff) 100%);
+  border-color: var(--primary, #4fd1c5);
+  color: white;
+  font-weight: 500;
+  box-shadow: 0 0 8px rgba(79, 209, 197, 0.3);
+}
+
+.mode-btn.clear-btn {
+  background: rgba(255, 77, 77, 0.1);
+  border-color: rgba(255, 77, 77, 0.3);
+  color: rgba(255, 77, 77, 0.8);
+}
+
+.mode-btn.clear-btn:hover {
+  background: rgba(255, 77, 77, 0.2);
+  border-color: rgba(255, 77, 77, 0.5);
+  color: rgba(255, 77, 77, 1);
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 </style> 

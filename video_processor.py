@@ -54,11 +54,11 @@ class VideoProcessor:
         self.analysis_timestamps = []
         self.last_analysis = time.time()
 
-        # 分析器
-        self.analyzer = MultiModalAnalyzer()
-
         # 消息队列
         self.alert_queue = queue.Queue()
+
+        # 分析器 (注入预警队列)
+        self.analyzer = MultiModalAnalyzer(alert_queue=self.alert_queue)
 
         # 创建摄像头线程
         self.webcam_thread = threading.Thread(target=self._process_webcam)
@@ -69,6 +69,8 @@ class VideoProcessor:
         # 添加活动追踪相关属性
         self.current_activity = None  # 当前正在进行的活动
         self.activity_start_time = None  # 活动开始时间
+        self.activity_start_image_url = None  # 活动开始时的图片URL
+        self.activity_start_video_url = None  # 活动开始时的视频URL
         self.last_activity_time = None  # 最后一次检测到活动的时间
         self.activity_threshold = 10  # 活动结束判定阈值（秒）
         
@@ -177,121 +179,39 @@ class VideoProcessor:
             asyncio.set_event_loop(loop)
 
             result = loop.run_until_complete(
-                self.analyzer.analyze(frames, self.fps, (timestamps[0], timestamps[-1]))
+                self.analyzer.analyze(frames, self.fps, timestamps)
             )
-
-            current_time = datetime.now()
             
-            # 定义允许触发预警的活动类型
-            allowed_activities = {
-                "睡觉", "玩手机", "喝饮料", "喝水", "吃东西", "专注工作学习",
-                "发现明火", "人员聚集", "打架斗殴"
-            }
+            # --- 旧的预警系统逻辑已由 multi_modal_analyzer 接管 ---
+            # --- 下方的代码块将被注释掉或移除 ---
+            
+            # current_time = datetime.now()
+            
+            # # 定义允许触发预警的活动类型
+            # allowed_activities = {
+            #     "睡觉", "玩手机", "喝饮料", "喝水", "吃东西", "专注工作学习",
+            #     "发现明火", "人员聚集", "打架斗殴"
+            # }
 
-            # 如果结果是字符串且不是"正常"
-            if isinstance(result, str) and result and result != "正常":
-                # 尝试从结果中提取行为 (假设格式为 "时间 情况")
-                parts = result.split()
-                behavior = parts[-1] if len(parts) > 1 else result # 获取最后一个词作为行为
+            # # 如果结果是字符串且不是"正常"
+            # if isinstance(result, str) and result and result != "正常":
+            #     # 尝试从结果中提取行为 (假设格式为 "时间 情况")
+            #     parts = result.split()
+            #     behavior = parts[-1] if len(parts) > 1 else result # 获取最后一个词作为行为
                 
-                # 检查提取的行为是否在允许列表中
-                if behavior in allowed_activities:
-                    logging.info(f"检测到允许的活动: {behavior}")
-                    
-                    # --- 活动持续时间逻辑开始 ---
-                    if self.current_activity is None:
-                        # 新活动开始
-                        self.current_activity = behavior
-                        self.activity_start_time = current_time
-                        self.last_activity_time = current_time
-                        
-                        # 创建初始预警
-                        alert_key = f"{behavior}_开始_{current_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                        logging.info(f"尝试生成预警，Key: {alert_key}, 当前 sent_alerts 数量: {len(self.sent_alerts)}")
-                        
-                        if alert_key not in self.sent_alerts:
-                            self.sent_alerts.add(alert_key)
-                            logging.info(f"添加 Key 到 sent_alerts: {alert_key}")
-                            
-                            alert_id = int(time.time())
-                            image_url = self.upload_to_oss(frames[-1], f"{OSSConfig.ALERT_PREFIX}alert_{alert_id}.jpg")
-                            video_url = frames_to_video_oss(frames, self.fps, timestamps, alert_id=alert_id)
-                            
-                            alert = {
-                                "type": "alert",
-                                "timestamp": current_time.strftime('%Y-%m-%d %H:%M:%S'),
-                                "content": behavior, # 只存储行为本身
-                                "start_time": current_time.strftime('%Y-%m-%d %H:%M:%S'),
-                                "level": "important", # 初始默认为 important
-                                "image_url": image_url,
-                                "video_url": video_url,
-                                "alert_key": alert_key,
-                                "activity_id": f"{behavior}_{int(self.activity_start_time.timestamp())}" # 活动唯一ID
-                            }
-                            # 如果是专注工作，级别改为 normal
-                            if behavior == "专注工作学习":
-                                alert["level"] = "normal"
-                                
-                            self.alert_queue.put(alert)
-                            self._run_async_task(self._add_to_vector_db(alert, alert["timestamp"]))
-                        else:
-                            logging.info(f"预警已存在，不重复发送: {alert_key}")
-                        
-                    elif self.current_activity == behavior:
-                        # 更新最后活动时间
-                        self.last_activity_time = current_time
-                    
-                    elif self.current_activity != behavior:
-                        # 活动变化，结束当前活动
-                        self._end_current_activity(frames, timestamps)
-                        
-                        # 开始新活动
-                        self.current_activity = behavior
-                        self.activity_start_time = current_time
-                        self.last_activity_time = current_time
-                        
-                        # 创建新活动预警
-                        alert_key = f"{behavior}_开始_{current_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                        logging.info(f"尝试生成新活动预警，Key: {alert_key}, 当前 sent_alerts 数量: {len(self.sent_alerts)}")
-                        
-                        if alert_key not in self.sent_alerts:
-                            self.sent_alerts.add(alert_key)
-                            logging.info(f"添加 Key 到 sent_alerts: {alert_key}")
-                        
-                            alert_id = int(time.time())
-                            image_url = self.upload_to_oss(frames[-1], f"{OSSConfig.ALERT_PREFIX}alert_{alert_id}.jpg")
-                            video_url = frames_to_video_oss(frames, self.fps, timestamps, alert_id=alert_id)
-                            
-                            alert = {
-                                "type": "alert",
-                                "timestamp": current_time.strftime('%Y-%m-%d %H:%M:%S'),
-                                "content": behavior, # 只存储行为本身
-                                "start_time": current_time.strftime('%Y-%m-%d %H:%M:%S'),
-                                "level": "important", # 初始默认为 important
-                                "image_url": image_url,
-                                "video_url": video_url,
-                                "alert_key": alert_key,
-                                "activity_id": f"{behavior}_{int(self.activity_start_time.timestamp())}" # 活动唯一ID
-                            }
-                             # 如果是专注工作，级别改为 normal
-                            if behavior == "专注工作学习":
-                                alert["level"] = "normal"
-                                
-                            self.alert_queue.put(alert)
-                            self._run_async_task(self._add_to_vector_db(alert, alert["timestamp"]))
-                        else:
-                            logging.info(f"预警已存在，不重复发送: {alert_key}")
-                    # --- 活动持续时间逻辑结束 ---
+            #     # 检查提取的行为是否在允许列表中
+            #     if behavior in allowed_activities:
+            #         logging.info(f"检测到允许的活动: {behavior}")
+            #         # 此处原有的活动持续时间判断和 alert_queue.put(alert) 逻辑
+            #         # 已全部转移到 multi_modal_analyzer.py 中实现
+            #     else:
+            #         # 如果检测到的行为不在允许列表中，记录日志但不生成预警
+            #         logging.info(f"检测到非预警活动: {behavior} (原始结果: {result})，不生成预警。")
 
-                else:
-                    # 如果检测到的行为不在允许列表中，记录日志但不生成预警
-                    logging.info(f"检测到非预警活动: {behavior} (原始结果: {result})，不生成预警。")
-
-            elif self.current_activity is not None:
-                # 检查是否需要结束当前活动 (即使当前检测为'正常'或非允许活动)
-                if (current_time - self.last_activity_time).total_seconds() > self.activity_threshold:
-                    logging.info(f"活动 '{self.current_activity}' 超时，准备结束。")
-                    self._end_current_activity(frames, timestamps)
+            # elif self.current_activity is not None:
+            #     # 检查是否需要结束当前活动 (即使当前检测为'正常'或非允许活动)
+            #     # 此部分逻辑也已转移
+            #     pass
 
             loop.close()
 
@@ -324,62 +244,64 @@ class VideoProcessor:
                 
     def _end_current_activity(self, frames, timestamps):
         """结束当前活动并发送持续时间预警"""
-        if self.current_activity and self.activity_start_time:
-            end_time = self.last_activity_time or datetime.now()
-            duration = (end_time - self.activity_start_time).total_seconds()
-            duration_minutes = round(duration / 60, 1) # 保留一位小数
+        # --- 旧的预警系统逻辑已由 multi_modal_analyzer 接管 ---
+        # --- 此方法不再需要，其功能已合并到 multi_modal_analyzer ---
+        pass
+        
+        # if self.current_activity and self.activity_start_time:
+        #     end_time = self.last_activity_time or datetime.now()
+        #     duration = (end_time - self.activity_start_time).total_seconds()
+        #     duration_minutes = round(duration / 60, 1) # 保留一位小数
 
-            # 定义允许触发预警的活动类型 (与 _run_analysis 一致)
-            allowed_activities = {
-                "睡觉", "玩手机", "喝饮料", "喝水", "吃东西", "专注工作学习",
-                "发现明火", "人员聚集", "打架斗殴"
-            }
+        #     # 定义允许触发预警的活动类型 (与 _run_analysis 一致)
+        #     allowed_activities = {
+        #         "睡觉", "玩手机", "喝饮料", "喝水", "吃东西", "专注工作学习",
+        #         "发现明火", "人员聚集", "打架斗殴"
+        #     }
 
-            # 只有当活动类型在允许列表内，且持续时间超过阈值(例如0.1分钟)才发送结束预警
-            if self.current_activity in allowed_activities and duration_minutes >= 0.1:
-                alert_key = f"{self.current_activity}_{self.activity_start_time.strftime('%Y-%m-%d %H:%M:%S')}_{end_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                logging.info(f"尝试生成结束预警，Key: {alert_key}, 当前 sent_alerts 数量: {len(self.sent_alerts)}")
+        #     # 只有当活动类型在允许列表内，且持续时间超过阈值(例如0.1分钟)才发送结束预警
+        #     if self.current_activity in allowed_activities and duration_minutes >= 0.1:
+        #         alert_key = f"{self.current_activity}_{self.activity_start_time.strftime('%Y-%m-%d %H:%M:%S')}_{end_time.strftime('%Y-%m-%d %H:%M:%S')}"
+        #         logging.info(f"尝试生成结束预警，Key: {alert_key}, 当前 sent_alerts 数量: {len(self.sent_alerts)}")
 
-                if alert_key not in self.sent_alerts:
-                    self.sent_alerts.add(alert_key)
-                    logging.info(f"添加 Key 到 sent_alerts: {alert_key}")
+        #         if alert_key not in self.sent_alerts:
+        #             self.sent_alerts.add(alert_key)
+        #             logging.info(f"添加 Key 到 sent_alerts: {alert_key}")
 
-                    alert_id = int(time.time())
-                    # 避免重复上传，可以选择只上传最后一张图片，或者不上传
-                    # image_url = self.upload_to_oss(frames[-1], f"{OSSConfig.ALERT_PREFIX}alert_{alert_id}.jpg")
-                    # video_url = frames_to_video_oss(frames, self.fps, timestamps, alert_id=alert_id)
-                    # 简化结束预警，可能不需要图片和视频
-                    image_url = None
-                    video_url = None
-
-
-                    alert = {
-                        "type": "alert",
-                        "timestamp": end_time.strftime('%Y-%m-%d %H:%M:%S'),
-                        "content": f"{self.current_activity}结束", # 更简洁的内容
-                        "start_time": self.activity_start_time.strftime('%Y-%m-%d %H:%M:%S'),
-                        "end_time": end_time.strftime('%Y-%m-%d %H:%M:%S'),
-                        "duration_minutes": duration_minutes,
-                        "level": "normal", # 结束预警通常为 normal
-                        "image_url": image_url,
-                        "video_url": video_url,
-                        "alert_key": alert_key,
-                        "activity_id": f"{self.current_activity}_{int(self.activity_start_time.timestamp())}" # 活动唯一ID
-                    }
-                    self.alert_queue.put(alert)
-                    # 结束预警通常不需要存入向量数据库，因为它只是对开始预警的补充
-                    # self._run_async_task(self._add_to_vector_db(alert, alert["timestamp"]))
-                else:
-                    logging.info(f"预警已存在，不重复发送: {alert_key}")
-            else:
-                 logging.info(f"活动 '{self.current_activity}' 不在允许列表或持续时间 ({duration_minutes} 分钟) 过短，不发送结束预警。")
+        #             # 使用活动开始时保存的图片和视频，确保预警信息与图片匹配
+        #             image_url = self.activity_start_image_url
+        #             video_url = self.activity_start_video_url
 
 
-            # 重置活动追踪状态
-            logging.info(f"重置活动追踪状态，原活动: {self.current_activity}")
-            self.current_activity = None
-            self.activity_start_time = None
-            self.last_activity_time = None
+        #             alert = {
+        #                 "type": "alert",
+        #                 "timestamp": end_time.strftime('%Y-%m-%d %H:%M:%S'),
+        #                 "content": f"{self.current_activity}结束", # 更简洁的内容
+        #                 "start_time": self.activity_start_time.strftime('%Y-%m-%d %H:%M:%S'),
+        #                 "end_time": end_time.strftime('%Y-%m-%d %H:%M:%S'),
+        #                 "duration_minutes": duration_minutes,
+        #                 "level": "normal", # 结束预警通常为 normal
+        #                 "image_url": image_url,
+        #                 "video_url": video_url,
+        #                 "alert_key": alert_key,
+        #                 "activity_id": f"{self.current_activity}_{int(self.activity_start_time.timestamp())}" # 活动唯一ID
+        #             }
+        #             self.alert_queue.put(alert)
+        #             # 结束预警通常不需要存入向量数据库，因为它只是对开始预警的补充
+        #             # self._run_async_task(self._add_to_vector_db(alert, alert["timestamp"]))
+        #         else:
+        #             logging.info(f"预警已存在，不重复发送: {alert_key}")
+        #     else:
+        #          logging.info(f"活动 '{self.current_activity}' 不在允许列表或持续时间 ({duration_minutes} 分钟) 过短，不发送结束预警。")
+
+
+        #     # 重置活动追踪状态
+        #     logging.info(f"重置活动追踪状态，原活动: {self.current_activity}")
+        #     self.current_activity = None
+        #     self.activity_start_time = None
+        #     self.activity_start_image_url = None
+        #     self.activity_start_video_url = None
+        #     self.last_activity_time = None
 
     async def video_streamer(self, websocket):
         while True:

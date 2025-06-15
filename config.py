@@ -4,11 +4,12 @@
 
 from typing import Dict, Any
 import logging
+import os
 
 # 视频源配置
 class VideoConfig:
     # 摄像头配置
-    CAMERA_INDEX = 4  # 小米摄像头的索引
+    CAMERA_INDEX = 0  # 小米摄像头的索引
     CAMERA_WIDTH = 1280  # 或其他支持的分辨率
     CAMERA_HEIGHT = 720
     FPS = 30
@@ -29,16 +30,23 @@ VIDEO_SOURCE = VideoConfig.CAMERA_INDEX  # 使用摄像头索引
 
 # API配置
 class APIConfig:
-    # --- Chutes.ai 配置 ---
+    # --- 阿里云 DashScope 配置 (已注释) ---
     # Qwen (Multi-modal)
-    QWEN_API_KEY = ""  # Chutes API密钥
-    QWEN_API_URL = "https://llm.chutes.ai/v1/chat/completions" # Chutes.ai endpoint
-    QWEN_MODEL = "Qwen/Qwen2.5-VL-32B-Instruct" # Chutes.ai Qwen model name
+    # QWEN_API_KEY = os.getenv("DASHSCOPE_API_KEY", "sk-ec7d738dba374ec4b5c4d3071e930da5")  # DashScope API密钥，支持环境变量
+    # QWEN_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1" # DashScope endpoint
+    # QWEN_MODEL = "qwen2.5-vl-3b-instruct" # DashScope Qwen model name
 
+    # --- 硅基流动 配置 ---
+    # Qwen (Multi-modal)
+    QWEN_API_KEY = "***REMOVED***"
+    QWEN_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
+    QWEN_MODEL = "Pro/Qwen/Qwen2.5-VL-7B-Instruct"
+
+    # --- Chutes.ai 配置 ---
     # DeepSeek (Text Generation / Analysis)
-    DEEPSEEK_API_KEY = ""  # Chutes API密钥
-    DEEPSEEK_API_URL = "https://llm.chutes.ai/v1/chat/completions" # Chutes.ai endpoint
-    DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V3-0324" # Chutes.ai DeepSeek model name
+    DEEPSEEK_API_KEY = "***REMOVED***"
+    DEEPSEEK_API_URL = "https://llm.chutes.ai/v1/chat/completions"
+    DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V3-0324"
 
     # --- OpenRouter 配置 (已注释) ---
     # Qwen (Multi-modal)
@@ -51,12 +59,8 @@ class APIConfig:
     # DEEPSEEK_API_URL = "https://openrouter.ai/api/v1/chat/completions"
     # DEEPSEEK_MODEL = "deepseek/deepseek-chat-v3-0324:free"
 
-    # --- 原始通义千问和 SiliconFlow 配置 (已注释) ---
-    # Qwen (Original Direct API)
-    # QWEN_API_KEY = "sk-a3c32f83f1cd411b8f226c95d90c6c9e"
-    # QWEN_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-    # QWEN_MODEL = "qwen2.5-vl-3b-instruct"
-    # DeepSeek (Original SiliconFlow API)
+    # --- 备用配置 (已注释) ---
+    # DeepSeek (Original SiliconFlow API - 旧密钥)
     # DEEPSEEK_API_KEY = "sf-ov7mJF26xj1OXomexsrP8ZkDqAMRt9Hfb"
     # DEEPSEEK_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
     # DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V3"
@@ -74,6 +78,8 @@ class RAGConfig:
     ENABLE_RAG = True
     VECTOR_API_URL = "http://localhost:8085/add_text/"  # 修改为正确的 RAG 服务器地址
     HISTORY_FILE = "video_history_info.txt"
+    # 视频服务向量存储配置
+    ENABLE_VIDEO_VECTOR_STORAGE = True  # 控制视频服务是否启用向量存储
 
 # 存档配置
 ARCHIVE_DIR = "archive"
@@ -87,7 +93,7 @@ class ServerConfig:
 
 # 日志配置
 LOG_CONFIG = {
-    'level': logging.INFO,
+    'level': logging.DEBUG,  # 临时改为DEBUG级别以便调试API问题
     'format': '%(asctime)s - %(levelname)s - %(message)s',
     'handlers': [
         {'type': 'file', 'filename': 'code.log'},
@@ -98,8 +104,8 @@ LOG_CONFIG = {
 # 阿里云OSS配置
 class OSSConfig:
     ENABLED = True  # 强制启用OSS，不使用回退
-    ACCESS_KEY_ID = ''
-    ACCESS_KEY_SECRET = ''
+    ACCESS_KEY_ID = '***REMOVED***'
+    ACCESS_KEY_SECRET = '***REMOVED***'
     ENDPOINT = 'oss-cn-beijing.aliyuncs.com'
     BUCKET = 'jasonli01'
     # 用于存储的路径前缀

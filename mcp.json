@@ -25,7 +25,7 @@
         "src\\mcp_server_browser_use\\server.py"
       ],
       "env":{
-        "MCP_API_KEY":"sk-f3261f60bcbb4cf69d7ab4927c6e2444",
+        "MCP_API_KEY":"sk-5de1d410783e4cf4a80fabca647a2477",
         "MCP_MODEL_PROVIDER":"deepseek",
         "MCP_MODEL_NAME":"deepseek-chat",
         "MCP_HEADLESS":"false",
@@ -33,6 +33,27 @@
         "PYTHONIOENCODING":"utf-8",
         "PYTHONUNBUFFERED":"1",
         "PYTHONUTF8":"1"
+      }
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
+    },
+    "duckduckgo-search": {
+      "command": "uvx",
+      "args": ["duckduckgo-mcp-server"]
+    },
+    "baidu-map": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@baidumap/mcp-server-baidu-map"
+      ],
+      "env": {
+        "BAIDU_MAP_API_KEY": "6OL4XE1fN9kB0637kEDgpM0tqJrIEowD"
       }
     }
   }

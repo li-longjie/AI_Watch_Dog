@@ -631,11 +631,19 @@ const initAlertsWebSocket = () => {
   ws.onmessage = (event) => {
     try {
       const alertData = JSON.parse(event.data);
-      if (alertData.type === 'alert') {
+      console.log('收到WebSocket消息:', alertData);
+      
+      // 检查是否是预警消息（预警消息应该有timestamp和content字段）
+      if (alertData.timestamp && alertData.content) {
         console.log('收到新预警:', alertData);
         alerts.value.unshift(alertData); // 最新的放前面
         if (alerts.value.length > MAX_DISPLAY_ALERTS) {
           alerts.value.pop();
+        }
+        
+        // 特别标记自定义预警
+        if (alertData.type === 'custom_alert') {
+          console.log('🔔 自定义预警已在前端显示:', alertData.content);
         }
       } else if (alertData.type === 'recent_alerts') {
          // 处理首次连接时收到的历史预警
@@ -646,9 +654,11 @@ const initAlertsWebSocket = () => {
          if (alerts.value.length > MAX_DISPLAY_ALERTS) {
              alerts.value = alerts.value.slice(0, MAX_DISPLAY_ALERTS);
          }
+      } else {
+        console.log('收到未知类型的WebSocket消息:', alertData);
       }
     } catch (error) {
-      console.error('处理预警消息失败:', error);
+      console.error('处理预警消息失败:', error, event.data);
     }
   };
 
@@ -804,11 +814,17 @@ watch(layoutMode, (newMode) => {
 }
 
 .panel {
-  background-color: rgba(15, 23, 42, 0.75); /* Slightly less transparent */
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border-radius: 6px; /* Slightly smaller radius */
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(79, 209, 197, 0.15);
+  background: linear-gradient(135deg, 
+    rgba(10, 25, 47, 0.95) 0%, 
+    rgba(15, 35, 65, 0.95) 50%,
+    rgba(20, 45, 80, 0.95) 100%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 12px;
+  box-shadow: 
+    0 10px 30px rgba(0, 0, 0, 0.3),
+    0 0 20px rgba(79, 209, 197, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
   padding: 15px;
   display: flex;
   flex-direction: column;
@@ -817,7 +833,7 @@ watch(layoutMode, (newMode) => {
   height: 100%; /* 默认占满单元格 */
   width: 100%; /* 默认占满单元格 */
   transition: transform 0.25s ease, box-shadow 0.25s ease, width 0.3s ease, height 0.3s ease;
-  border: 1px solid rgba(79, 209, 197, 0.1); /* Subtler border */
+  border: 1px solid rgba(79, 209, 197, 0.2);
   min-width: 200px;
   min-height: 150px;
   box-sizing: border-box; /* 确保边框和内边距不会增加宽高 */
@@ -826,7 +842,10 @@ watch(layoutMode, (newMode) => {
 
 .panel:hover {
   transform: translateY(-5px) scale(1.01); /* Subtler hover effect */
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3), 0 0 15px rgba(79, 209, 197, 0.3);
+  box-shadow: 
+    0 15px 40px rgba(0, 0, 0, 0.4),
+    0 0 25px rgba(79, 209, 197, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
   border-color: rgba(79, 209, 197, 0.4);
   z-index: 10; /* Bring panel to front on hover */
 }
@@ -837,15 +856,15 @@ watch(layoutMode, (newMode) => {
   margin: -15px -15px 15px -15px; /* Extend to edges */
   padding: 10px 15px; /* Adjust padding */
   color: var(--primary, #4fd1c5);
-  border-bottom: 1px solid rgba(79, 209, 197, 0.3); /* Lighter border */
+  border-bottom: 1px solid rgba(79, 209, 197, 0.2);
   display: flex;
   align-items: center;
   letter-spacing: 1px;
   text-shadow: 0 0 5px rgba(79, 209, 197, 0.3);
   cursor: move;
   user-select: none;
-  background-color: rgba(10, 25, 47, 0.5); /* Add slight background to title */
-  border-radius: 6px 6px 0 0; /* Match panel radius */
+  background: linear-gradient(90deg, rgba(79, 209, 197, 0.1), transparent);
+  border-radius: 12px 12px 0 0; /* Match panel radius */
   flex-shrink: 0; /* Prevent shrinking */
 }
 
@@ -883,7 +902,7 @@ watch(layoutMode, (newMode) => {
 .panel > div:not(.panel-title):not(.resize-handle) {
   flex-grow: 1; /* Allow content div to grow */
   overflow: hidden; /* Let children handle scroll */
-  border-radius: 0 0 6px 6px; /* Radius for content area below title */
+  border-radius: 0 0 12px 12px; /* Radius for content area below title */
 }
 
 /* Adjust specific panel spans/borders if needed (grid-area handles layout) */
@@ -970,10 +989,10 @@ watch(layoutMode, (newMode) => {
 .resize-n { top: -2px; left: 0; width: 100%; height: 8px; cursor: n-resize; }
 
 /* Corners */
-.resize-se { bottom: -2px; right: -2px; width: 12px; height: 12px; cursor: se-resize; border-radius: 0 0 4px 0; }
-.resize-sw { bottom: -2px; left: -2px; width: 12px; height: 12px; cursor: sw-resize; border-radius: 0 0 0 4px; }
-.resize-ne { top: -2px; right: -2px; width: 12px; height: 12px; cursor: ne-resize; border-radius: 0 4px 0 0; }
-.resize-nw { top: -2px; left: -2px; width: 12px; height: 12px; cursor: nw-resize; border-radius: 4px 0 0 0; }
+.resize-se { bottom: -2px; right: -2px; width: 12px; height: 12px; cursor: se-resize; border-radius: 0 0 8px 0; }
+.resize-sw { bottom: -2px; left: -2px; width: 12px; height: 12px; cursor: sw-resize; border-radius: 0 0 0 8px; }
+.resize-ne { top: -2px; right: -2px; width: 12px; height: 12px; cursor: ne-resize; border-radius: 0 8px 0 0; }
+.resize-nw { top: -2px; left: -2px; width: 12px; height: 12px; cursor: nw-resize; border-radius: 8px 0 0 0; }
 
 /* Resizing state */
 .panel.resizing {
