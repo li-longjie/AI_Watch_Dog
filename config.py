@@ -4,11 +4,17 @@
 
 from typing import Dict, Any
 import logging
+import os
+from dotenv import load_dotenv
+
+# 在脚本的最开始加载 .env 文件
+# 这会把 .env 文件中的键值对加载到环境变量中
+load_dotenv()
 
 # 视频源配置
 class VideoConfig:
     # 摄像头配置
-    CAMERA_INDEX = 4  # 小米摄像头的索引
+    CAMERA_INDEX = 0  # 小米摄像头的索引
     CAMERA_WIDTH = 1280  # 或其他支持的分辨率
     CAMERA_HEIGHT = 720
     FPS = 30
@@ -29,37 +35,41 @@ VIDEO_SOURCE = VideoConfig.CAMERA_INDEX  # 使用摄像头索引
 
 # API配置
 class APIConfig:
-    # --- Chutes.ai 配置 ---
+    # --- 阿里云 DashScope 配置 (已注释) ---
     # Qwen (Multi-modal)
-    QWEN_API_KEY = ""  # Chutes API密钥
-    QWEN_API_URL = "https://llm.chutes.ai/v1/chat/completions" # Chutes.ai endpoint
-    QWEN_MODEL = "Qwen/Qwen2.5-VL-32B-Instruct" # Chutes.ai Qwen model name
+    # QWEN_API_KEY = os.getenv("DASHSCOPE_API_KEY", "sk-ec7d738dba374ec4b5c4d3071e930da5")  # DashScope API密钥，支持环境变量
+    # QWEN_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1" # DashScope endpoint
+    # QWEN_MODEL = "qwen2.5-vl-3b-instruct" # DashScope Qwen model name
 
-    # DeepSeek (Text Generation / Analysis)
-    DEEPSEEK_API_KEY = ""  # Chutes API密钥
-    DEEPSEEK_API_URL = "https://llm.chutes.ai/v1/chat/completions" # Chutes.ai endpoint
-    DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V3-0324" # Chutes.ai DeepSeek model name
+    # --- 硅基流动 (SiliconFlow) / Chutes.ai / OpenRouter 通用配置 ---
+    # 从环境变量中读取API密钥，如果未设置，则使用占位符
+    QWEN_API_KEY = os.getenv("QWEN_API_KEY", "YOUR_QWEN_API_KEY_HERE")
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "YOUR_DEEPSEEK_API_KEY_HERE")
 
-    # --- OpenRouter 配置 (已注释) ---
-    # Qwen (Multi-modal)
-    # QWEN_API_KEY = "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"
+    # 根据需要选择API服务商
+    # 硅基流动 (SiliconFlow)
+    QWEN_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
+    QWEN_MODEL = "Pro/Qwen/Qwen2.5-VL-7B-Instruct"
+    DEEPSEEK_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
+    DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V3-0324"
+
+    # Chutes.ai
+    # DEEPSEEK_API_URL = "https://llm.chutes.ai/v1/chat/completions"
+    # DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V3-0324"
+
+    # OpenRouter
+    # QWEN_API_KEY = os.getenv("OPENROUTER_API_KEY", "YOUR_OPENROUTER_API_KEY_HERE")
+    # DEEPSEEK_API_KEY = os.getenv("OPENROUTER_API_KEY", "YOUR_OPENROUTER_API_KEY_HERE")
     # QWEN_API_URL = "https://openrouter.ai/api/v1/chat/completions"
     # QWEN_MODEL = "qwen/qwen2.5-vl-32b-instruct:free"
-
-    # DeepSeek (Text Generation / Analysis)
-    # DEEPSEEK_API_KEY = "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"
     # DEEPSEEK_API_URL = "https://openrouter.ai/api/v1/chat/completions"
     # DEEPSEEK_MODEL = "deepseek/deepseek-chat-v3-0324:free"
-
-    # --- 原始通义千问和 SiliconFlow 配置 (已注释) ---
-    # Qwen (Original Direct API)
-    # QWEN_API_KEY = "sk-a3c32f83f1cd411b8f226c95d90c6c9e"
-    # QWEN_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-    # QWEN_MODEL = "qwen2.5-vl-3b-instruct"
-    # DeepSeek (Original SiliconFlow API)
-    # DEEPSEEK_API_KEY = "sf-ov7mJF26xj1OXomexsrP8ZkDqAMRt9Hfb"
-    # DEEPSEEK_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-    # DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V3"
+    
+    # 检查环境变量是否已设置
+    if QWEN_API_KEY.startswith("YOUR_"):
+        print("警告: Qwen API Key 未通过环境变量'QWEN_API_KEY'配置。")
+    if DEEPSEEK_API_KEY.startswith("YOUR_"):
+        print("警告: DeepSeek API Key 未通过环境变量'DEEPSEEK_API_KEY'配置。")
 
     # API请求通用配置
     REQUEST_TIMEOUT = 60.0  # 请求超时时间（秒）
@@ -74,6 +84,8 @@ class RAGConfig:
     ENABLE_RAG = True
     VECTOR_API_URL = "http://localhost:8085/add_text/"  # 修改为正确的 RAG 服务器地址
     HISTORY_FILE = "video_history_info.txt"
+    # 视频服务向量存储配置
+    ENABLE_VIDEO_VECTOR_STORAGE = True  # 控制视频服务是否启用向量存储
 
 # 存档配置
 ARCHIVE_DIR = "archive"
@@ -87,7 +99,7 @@ class ServerConfig:
 
 # 日志配置
 LOG_CONFIG = {
-    'level': logging.INFO,
+    'level': logging.DEBUG,  # 临时改为DEBUG级别以便调试API问题
     'format': '%(asctime)s - %(levelname)s - %(message)s',
     'handlers': [
         {'type': 'file', 'filename': 'code.log'},
@@ -95,13 +107,21 @@ LOG_CONFIG = {
     ]
 }
 
-# 阿里云OSS配置
+# 阿里云 OSS 配置 (可选)
 class OSSConfig:
-    ENABLED = True  # 强制启用OSS，不使用回退
-    ACCESS_KEY_ID = ''
-    ACCESS_KEY_SECRET = ''
-    ENDPOINT = 'oss-cn-beijing.aliyuncs.com'
-    BUCKET = 'jasonli01'
+    # 强烈建议使用环境变量来存储敏感信息
+    # 在您的操作系统中设置环境变量 'OSS_ACCESS_KEY_ID' 和 'OSS_ACCESS_KEY_SECRET'
+    ACCESS_KEY_ID = os.getenv("OSS_ACCESS_KEY_ID", "YOUR_ALIYUN_ACCESS_KEY_ID")
+    ACCESS_KEY_SECRET = os.getenv("OSS_ACCESS_KEY_SECRET", "YOUR_ALIYUN_ACCESS_KEY_SECRET")
+    
+    # 检查环境变量是否已设置
+    if ACCESS_KEY_ID == "YOUR_ALIYUN_ACCESS_KEY_ID" or not ACCESS_KEY_ID:
+        print("警告: 阿里云 ACCESS_KEY_ID 未通过环境变量配置，将使用 config.py 中的默认值。")
+    if ACCESS_KEY_SECRET == "YOUR_ALIYUN_ACCESS_KEY_SECRET" or not ACCESS_KEY_SECRET:
+        print("警告: 阿里云 ACCESS_KEY_SECRET 未通过环境变量配置，将使用 config.py 中的默认值。")
+
+    ENDPOINT = "oss-cn-beijing.aliyuncs.com"
+    BUCKET_NAME = "ai-watch-dog"
     # 用于存储的路径前缀
     ALERT_PREFIX = 'video_warning/'
     ANALYSIS_PREFIX = 'analysis_frames/'

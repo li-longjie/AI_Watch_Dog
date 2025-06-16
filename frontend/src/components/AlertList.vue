@@ -2,34 +2,34 @@
   <div class="alerts-panel">
     <div class="panel-title">预警信息</div>
     <div class="alerts-container" ref="alertsContainer">
-      <div v-if="groupedAlerts.length === 0" class="no-alerts">
+      <div v-if="sortedAlerts.length === 0" class="no-alerts">
         暂无预警信息
       </div>
       <div v-else>
-        <div v-for="(group, index) in groupedAlerts" :key="group.id" class="alert-group">
+        <!-- 直接遍历排序后的预警，不再分组 -->
+        <div v-for="alert in sortedAlerts" :key="alert.alert_key" class="alert-group">
           <div
             class="alert-item"
-            :class="{
-              'alert-important': isImportantAlert(group.alerts[0]) && group.activity !== '专注工作学习',
-              'alert-focus': group.activity === '专注工作学习'
-            }"
-            @click="replayAlert(group.alerts[0])"
+            :class="getAlertLevelClass(alert)"
+            @click="replayAlert(alert)"
             title="点击查看详情"
           >
-            <div class="alert-icon" v-if="group.activity !== '专注工作学习'">
+            <div class="alert-icon" v-if="shouldShowIcon(alert)">
               <i class="fas fa-exclamation-triangle"></i>
             </div>
-            <div class="alert-content" :class="{'focus-content': group.activity === '专注工作学习'}">
-              <div class="alert-timestamp">{{ formatTime(group.timestamp) }}</div>
+            <div class="alert-content" :class="{'low-content': isLowAlert(alert)}">
+              <div class="alert-timestamp">{{ formatTime(alert.timestamp) }}</div>
               <div class="alert-message">
-                <template v-if="group.isComplete">
-                  {{ group.activity }}：{{ formatDuration(group.duration_minutes) }}
+                <!-- 判断是否是结束预警 -->
+                <template v-if="alert.type && alert.type.includes('end')">
+                  {{ alert.content.replace('结束', '') }}：{{ formatDuration(alert.duration_minutes) }}
                   <div class="alert-time-range">
-                    {{ formatTime(group.start_time) }} - {{ formatTime(group.end_time) }}
+                    {{ formatTime(alert.start_time) }} - {{ formatTime(alert.end_time) }}
                   </div>
                 </template>
+                <!-- 如果是开始预警或单次预警 -->
                 <template v-else>
-                  {{ group.activity }}
+                  {{ alert.content }}
                 </template>
               </div>
             </div>
@@ -54,82 +54,45 @@ const props = defineProps({
 const emit = defineEmits(['replay-alert']);
 const alertsContainer = ref(null);
 
-// 按活动ID对预警进行分组
-const groupedAlerts = computed(() => {
-  const groups = {};
-
-  // 首先对alerts按时间排序（最新的在前）
-  const sortedAlerts = [...props.alerts].sort((a, b) =>
+// 直接对传入的 alerts 数组进行排序，不再进行分组
+const sortedAlerts = computed(() => {
+  return [...props.alerts].sort((a, b) =>
     new Date(b.timestamp) - new Date(a.timestamp)
   );
-
-  // 按activity_id分组
-  sortedAlerts.forEach(alert => {
-     // 使用 activity_id 或生成一个基于行为和开始时间的 ID
-    const activityId = alert.activity_id || `${alert.content}_${new Date(alert.start_time || alert.timestamp).getTime()}`;
-    if (!groups[activityId]) {
-      groups[activityId] = {
-        id: activityId,
-        alerts: [],
-        startAlert: null,
-        endAlert: null,
-        isComplete: false,
-        activity: '未知活动' // 初始化活动名称
-      };
-    }
-
-    // 添加到组
-    groups[activityId].alerts.push(alert);
-
-    // 判断是开始还是结束预警，并提取活动名称
-    if (alert.content?.includes('结束')) {
-        groups[activityId].endAlert = alert;
-        // 从结束信息中提取活动名
-        groups[activityId].activity = alert.content.split('结束')[0];
-    } else {
-        // 假设非结束预警都是开始预警或单一预警
-        groups[activityId].startAlert = groups[activityId].startAlert || alert; // 保留最早的开始预警
-        groups[activityId].activity = alert.content; // 直接使用内容作为活动名
-    }
-
-    // 标记组是否完成
-    groups[activityId].isComplete = groups[activityId].startAlert && groups[activityId].endAlert;
-  });
-
-  // 处理每个组的数据
-  return Object.values(groups).map(group => {
-    // 确定主要时间戳和级别
-    const mainAlert = group.endAlert || group.startAlert; // 优先使用结束或开始预警
-    const displayTimestamp = mainAlert?.timestamp || group.alerts[0]?.timestamp;
-    const level = mainAlert?.level || group.alerts[0]?.level;
-
-    return {
-      id: group.id,
-      alerts: group.alerts, // 保留原始预警列表
-      timestamp: displayTimestamp, // 用于排序和显示的时间戳
-      activity: group.activity, // 组的活动名称
-      isComplete: group.isComplete, // 是否是完整活动（有开始有结束）
-      start_time: group.startAlert?.start_time || group.startAlert?.timestamp, // 开始时间
-      end_time: group.endAlert?.end_time || group.endAlert?.timestamp, // 结束时间
-      duration_minutes: group.endAlert?.duration_minutes || 0, // 持续时间
-      level: level // 预警级别
-    };
-  }).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)); // 最新的在前
 });
 
-
-const isImportantAlert = (alert) => {
-  // 如果 alert 不存在或 level 不存在，则认为不是 important
-  if (!alert || !alert.level) {
-      return false;
+// 根据预警级别获取对应的CSS类
+const getAlertLevelClass = (alert) => {
+  const level = alert.level;
+  
+  // 专注工作学习保持绿色样式
+  if (alert.content.includes('专注工作学习')) {
+    return 'alert-focus';
   }
-  // "专注工作学习" 即使 level 是 important 也不标记为 alert-important
-  if (alert.content === '专注工作学习') {
-      return false;
+  
+  // 根据级别返回对应的样式类
+  switch (level) {
+    case 'low':
+      return 'alert-low';
+    case 'medium':
+      return 'alert-medium';
+    case 'high':
+      return 'alert-high';
+    default:
+      return 'alert-medium'; // 默认中级
   }
-  return alert.level === 'important';
 };
 
+// 判断是否为低级预警
+const isLowAlert = (alert) => {
+  return alert.level === 'low' || alert.content.includes('专注工作学习');
+};
+
+// 判断是否显示预警图标
+const shouldShowIcon = (alert) => {
+  // 低级预警（包括专注工作学习）不显示图标
+  return alert.level !== 'low' && !alert.content.includes('专注工作学习');
+};
 
 const formatTime = (timeString) => {
   if (!timeString) return '';
@@ -150,7 +113,6 @@ const formatTime = (timeString) => {
      return timeString; // 返回原始字符串作为后备
   }
 };
-
 
 const formatDuration = (minutes) => {
   if (minutes === undefined || minutes === null || minutes < 0) return '未知时长';
@@ -178,7 +140,6 @@ watch(() => props.alerts.length, () => {
     }, 100);
   }
 }, { deep: true }); // 使用 deep watch 监听数组内部变化
-
 
 onMounted(() => {
   if (alertsContainer.value) {
@@ -255,16 +216,37 @@ onMounted(() => {
   /* Keep left border color consistent on hover unless specified */
 }
 
-.alert-important {
-  border-left-color: #ef4444; /* Strong red for important */
-  /* Optional: Add a subtle background tint for important alerts */
-  /* background-color: rgba(239, 68, 68, 0.05); */
+/* 低级预警样式 - 绿色 */
+.alert-low {
+  border-left-color: #10b981; /* Green border */
+  background-color: rgba(16, 185, 129, 0.08); /* Subtle green background */
 }
-.alert-important:hover {
-   border-left-color: #dc2626; /* Darker red on hover */
+.alert-low:hover {
+  border-left-color: #059669; /* Darker green on hover */
+  background-color: rgba(16, 185, 129, 0.12);
 }
 
-/* Style for '专注工作学习' */
+/* 中级预警样式 - 黄色 */
+.alert-medium {
+  border-left-color: #f59e0b; /* Amber/yellow border */
+  background-color: rgba(245, 158, 11, 0.08); /* Subtle amber background */
+}
+.alert-medium:hover {
+  border-left-color: #d97706; /* Darker amber on hover */
+  background-color: rgba(245, 158, 11, 0.12);
+}
+
+/* 高级预警样式 - 红色 */
+.alert-high {
+  border-left-color: #ef4444; /* Red border */
+  background-color: rgba(239, 68, 68, 0.08); /* Subtle red background */
+}
+.alert-high:hover {
+  border-left-color: #dc2626; /* Darker red on hover */
+  background-color: rgba(239, 68, 68, 0.12);
+}
+
+/* Style for '专注工作学习' - 保持原有绿色样式 */
 .alert-focus {
   border-left-color: #10b981; /* Green border for focus */
   background-color: rgba(16, 185, 129, 0.08); /* Subtle green background */
@@ -284,10 +266,17 @@ onMounted(() => {
   color: rgba(248, 113, 113, 0.8); /* Default icon color */
 }
 
-.alert-important .alert-icon {
-  color: #ef4444; /* Important icon color */
+/* 中级预警图标 - 黄色 */
+.alert-medium .alert-icon {
+  color: #f59e0b; /* Amber icon color */
 }
-/* Focus alert has no icon by default due to v-if */
+
+/* 高级预警图标 - 红色 */
+.alert-high .alert-icon {
+  color: #ef4444; /* Red icon color */
+}
+
+/* 低级预警和专注工作学习不显示图标 */
 
 
 .alert-content {
@@ -295,8 +284,9 @@ onMounted(() => {
   padding: 0 10px 0 0; /* Padding only on the right now */
   color: #e2e8f0;
 }
-/* Adjust content padding if icon is hidden */
-.focus-content {
+
+/* 调整没有图标的预警内容padding */
+.low-content {
     padding-left: 12px; /* Add left padding when icon is hidden */
 }
 

@@ -27,7 +27,7 @@
           <img :src="selectedAlert.image_url" :alt="`预警: ${selectedAlert.content}`" class="replay-media replay-image">
           <div class="replay-info">
             <span>{{ formatDisplayTime(selectedAlert.timestamp) }}</span>
-            <span>{{ selectedAlert.content }}</span>
+            <span>{{ formatAlertContent(selectedAlert) }}</span>
           </div>
           <div class="warning-overlay"></div>
           <div class="warning-frame"></div>
@@ -39,7 +39,7 @@
           </video>
           <div class="replay-info">
             <span>{{ formatDisplayTime(selectedAlert.timestamp) }}</span>
-            <span>{{ selectedAlert.content }}</span>
+            <span>{{ formatAlertContent(selectedAlert) }}</span>
           </div>
         </div>
 
@@ -154,6 +154,48 @@ const formatDisplayTime = (isoString) => {
     console.error("无法格式化时间戳:", isoString, e);
     return isoString; // 返回原始字符串
   }
+};
+
+// 格式化预警内容，显示持续时间
+const formatAlertContent = (alert) => {
+  if (!alert) return '';
+  
+  let content = alert.content || '';
+  
+  // 如果有持续时间信息，添加到内容中
+  if (alert.duration_minutes !== undefined && alert.duration_minutes > 0) {
+    const duration = alert.duration_minutes;
+    let durationText = '';
+    
+    if (duration >= 60) {
+      const hours = Math.floor(duration / 60);
+      const minutes = Math.round(duration % 60);
+      durationText = hours > 0 ? `${hours}小时${minutes}分钟` : `${minutes}分钟`;
+    } else if (duration >= 1) {
+      durationText = `${Math.round(duration)}分钟`;
+    } else {
+      durationText = `${Math.round(duration * 60)}秒`;
+    }
+    
+    // 如果是结束预警，显示持续时间
+    if (content.includes('结束')) {
+      content = `${content}: ${durationText}`;
+    } else {
+      // 对于开始预警，如果有结束时间，也可以显示持续时间
+      if (alert.end_time && alert.start_time) {
+        content = `${content} (持续${durationText})`;
+      }
+    }
+  }
+  
+  // 如果有开始时间和结束时间，显示时间范围
+  if (alert.start_time && alert.end_time && alert.start_time !== alert.end_time) {
+    const startTime = formatDisplayTime(alert.start_time);
+    const endTime = formatDisplayTime(alert.end_time);
+    content += ` [${startTime} - ${endTime}]`;
+  }
+  
+  return content;
 };
 
 // 检查连接状态 (基于传入的 wsConnection)

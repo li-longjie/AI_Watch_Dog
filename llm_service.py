@@ -7,27 +7,23 @@ import logging
 from typing import Optional, Dict, Any, Union
 import os
 
-# 硅基流动API配置（用于RAG问答）
-SILICONFLOW_API_KEY = "sk-xugvbuiyayzzfeoelfytnfioimnwvzouawxlavixynzuloui"
-SILICONFLOW_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-SILICONFLOW_MODEL = "deepseek-ai/DeepSeek-V3"
+# 硅基流动API配置（用于RAG问答）- 已废弃，统一使用Chutes.ai
+# SILICONFLOW_API_KEY = "sk-xugvbuiyayzzfeoelfytnfioimnwvzouawxlavixynzuloui"
+# SILICONFLOW_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
+# SILICONFLOW_MODEL = "deepseek-ai/DeepSeek-V3"
 
 class LLMService:
     @staticmethod
-    async def get_response(prompt: str, use_chutes: bool = False) -> str:
+    async def get_response(prompt: str, use_chutes: bool = True) -> str:
         """调用大模型生成回答
         
         Args:
             prompt: 提示词
-            use_chutes: 是否使用Chutes.ai的DeepSeek模型
+            use_chutes: 是否使用Chutes.ai的模型（为了保持接口兼容性，默认为True）
         """
         try:
-            if use_chutes:
-                # 视频描述和活动提取继续使用Chutes.ai
-                return await chat_completion(prompt)
-            else:
-                # 智能问答模块使用硅基流动
-                return await query_siliconflow_model(prompt)
+            # 统一使用Chutes.ai的API
+            return await chat_completion(prompt)
         except Exception as e:
             # 使用 logging 记录错误
             logging.error(f"调用 LLMService.get_response 时出错: {e}")
@@ -40,73 +36,74 @@ class LLMService:
         # 可以在这里添加后处理逻辑
         return response.strip()
 
-async def query_siliconflow_model(prompt: str) -> str:
-    """调用硅基流动API获取回答（用于智能问答模块）"""
-    try:
-        logging.info(f"提示词长度: {len(prompt)}")
-        
-        # 构建请求数据
-        request_data = {
-            "model": SILICONFLOW_MODEL,
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "stream": False,
-            "max_tokens": 512,
-            "temperature": 0.7,
-            "top_p": 0.7,
-            "top_k": 50,
-            "frequency_penalty": 0.5,
-            "n": 1,
-            "stop": []
-        }
-        
-        logging.info(f"正在发送请求到硅基流动API")
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                SILICONFLOW_API_URL,
-                headers={
-                    "Authorization": f"Bearer {SILICONFLOW_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json=request_data,
-                timeout=60.0
-            )
-            
-            # 记录响应状态码
-            logging.info(f"硅基流动API响应状态码: {response.status_code}")
-            
-            # 检查HTTP错误
-            if response.status_code != 200:
-                error_text = response.text
-                logging.error(f"硅基流动API返回HTTP错误: {response.status_code} - {error_text}")
-                
-                # 如果硅基流动API失败，尝试回退到Chutes.ai
-                logging.info("硅基流动API失败，尝试使用Chutes.ai作为回退")
-                return await chat_completion(prompt)
-            
-            # 解析响应
-            result = response.json()
-            logging.info(f"硅基流动API响应: {result.keys()}")
-            
-            if "choices" in result and len(result["choices"]) > 0:
-                message = result["choices"][0].get("message", {})
-                content = message.get("content", "")
-                return content
-            else:
-                logging.error(f"硅基流动API响应缺少choices字段: {result}")
-                
-                # 如果响应格式异常，回退到Chutes.ai
-                logging.info("硅基流动API响应格式异常，尝试使用Chutes.ai作为回退")
-                return await chat_completion(prompt)
-            
-    except Exception as e:
-        logging.error(f"调用硅基流动模型异常: {str(e)}")
-        
-        # 如果发生异常，回退到Chutes.ai
-        logging.info(f"硅基流动API异常，尝试使用Chutes.ai作为回退: {e}")
-        return await chat_completion(prompt)
+# 注释掉硅基流动相关函数，不再使用
+# async def query_siliconflow_model(prompt: str) -> str:
+#     """调用硅基流动API获取回答（用于智能问答模块）"""
+#     try:
+#         logging.info(f"提示词长度: {len(prompt)}")
+#         
+#         # 构建请求数据
+#         request_data = {
+#             "model": SILICONFLOW_MODEL,
+#             "messages": [
+#                 {"role": "user", "content": prompt}
+#             ],
+#             "stream": False,
+#             "max_tokens": 512,
+#             "temperature": 0.7,
+#             "top_p": 0.7,
+#             "top_k": 50,
+#             "frequency_penalty": 0.5,
+#             "n": 1,
+#             "stop": []
+#         }
+#         
+#         logging.info(f"正在发送请求到硅基流动API")
+#         
+#         async with httpx.AsyncClient() as client:
+#             response = await client.post(
+#                 SILICONFLOW_API_URL,
+#                 headers={
+#                     "Authorization": f"Bearer {SILICONFLOW_API_KEY}",
+#                     "Content-Type": "application/json"
+#                 },
+#                 json=request_data,
+#                 timeout=60.0
+#             )
+#             
+#             # 记录响应状态码
+#             logging.info(f"硅基流动API响应状态码: {response.status_code}")
+#             
+#             # 检查HTTP错误
+#             if response.status_code != 200:
+#                 error_text = response.text
+#                 logging.error(f"硅基流动API返回HTTP错误: {response.status_code} - {error_text}")
+#                 
+#                 # 如果硅基流动API失败，尝试回退到Chutes.ai
+#                 logging.info("硅基流动API失败，尝试使用Chutes.ai作为回退")
+#                 return await chat_completion(prompt)
+#             
+#             # 解析响应
+#             result = response.json()
+#             logging.info(f"硅基流动API响应: {result.keys()}")
+#             
+#             if "choices" in result and len(result["choices"]) > 0:
+#                 message = result["choices"][0].get("message", {})
+#                 content = message.get("content", "")
+#                 return content
+#             else:
+#                 logging.error(f"硅基流动API响应缺少choices字段: {result}")
+#                 
+#                 # 如果响应格式异常，回退到Chutes.ai
+#                 logging.info("硅基流动API响应格式异常，尝试使用Chutes.ai作为回退")
+#                 return await chat_completion(prompt)
+#             
+#     except Exception as e:
+#         logging.error(f"调用硅基流动模型异常: {str(e)}")
+#         
+#         # 如果发生异常，回退到Chutes.ai
+#         logging.info(f"硅基流动API异常，尝试使用Chutes.ai作为回退: {e}")
+#         return await chat_completion(prompt)
 
 async def chat_completion(prompt: str, model: str = "deepseek", temperature: float = None, max_tokens: int = 1024) -> str:
     """使用Chutes.ai LLM模型（用于视频画面描述和活动提取）
@@ -117,15 +114,14 @@ async def chat_completion(prompt: str, model: str = "deepseek", temperature: flo
         temperature: 温度参数，决定输出的随机性
         max_tokens: 最大生成token数
     """
-    # 保持与以前相同的接口，让video_processor和multi_modal_analyzer能正常工作
-    api_key = APIConfig.DEEPSEEK_API_KEY
-    
-    # 根据model参数选择不同的模型
+    # 根据model参数选择不同的API配置
     if model == "qwen":
+        api_key = APIConfig.QWEN_API_KEY
         model_name = APIConfig.QWEN_MODEL
+        api_url = APIConfig.QWEN_API_URL
     else:  # 默认使用deepseek
+        api_key = APIConfig.DEEPSEEK_API_KEY
         model_name = APIConfig.DEEPSEEK_MODEL
-    
     api_url = APIConfig.DEEPSEEK_API_URL
 
     headers = {
@@ -135,15 +131,30 @@ async def chat_completion(prompt: str, model: str = "deepseek", temperature: flo
 
     data = {
         "model": model_name,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": temperature if temperature is not None else APIConfig.TEMPERATURE,
+        "messages": [{
+            "role": "user", 
+            "content": prompt
+        }],
         "max_tokens": max_tokens,
         "stream": False
+        # 完全不发送stop参数，避免触发默认停止令牌
     }
+    
+    # 添加可选参数
+    if temperature is not None:
+        data["temperature"] = temperature
+
+    logging.debug(f"🚀 准备调用API: {api_url}")
+    logging.debug(f"📋 使用模型: {model_name}")
+    logging.debug(f"📝 提示词长度: {len(prompt)} 字符")
+    logging.debug(f"⚙️ 参数: max_tokens={max_tokens}, temperature={temperature}")
+    
+    # 检查提示词中是否包含可能导致问题的字符（注释掉以减少日志噪音）
+    # if '#' in prompt:
+    #     logging.warning(f"⚠️ 警告：提示词包含#字符，可能导致API停止令牌问题")
+    #     logging.debug(f"📄 提示词预览: {prompt[:200]}...")
 
     try:
-        logging.info(f"正在发送请求到Chutes.ai API: {api_url}, 模型: {model_name}")
-        
         async with httpx.AsyncClient(timeout=APIConfig.REQUEST_TIMEOUT) as client:
             response = await client.post(
                 api_url,
@@ -164,15 +175,22 @@ async def chat_completion(prompt: str, model: str = "deepseek", temperature: flo
 
         # 解析成功响应
         response_data = response.json()
+        logging.debug(f"Chutes.ai API 完整响应: {response_data}")
+        
         if "choices" in response_data and len(response_data["choices"]) > 0:
             message = response_data["choices"][0].get("message")
             if message:
                 content = message.get("content")
                 if isinstance(content, str):
+                    logging.debug(f"成功获取API响应内容，长度: {len(content)}")
                     return content.strip()
                 else:
                     logging.error(f"API响应中content非字符串或为None: {content}")
-                    return "错误：API响应内容格式不正确"
+                    logging.error(f"完整message对象: {message}")
+                    # 检查是否有usage信息显示API确实被调用了
+                    usage_info = response_data.get("usage", {})
+                    logging.error(f"API使用情况: {usage_info}")
+                    return f"API返回的content类型错误: {type(content)}, 值: {content}"
             else:
                 logging.error(f"API响应格式错误(缺少message): {response_data}")
                 return "错误：API响应格式错误(message)"
@@ -193,3 +211,11 @@ async def chat_completion(prompt: str, model: str = "deepseek", temperature: flo
 # if chat_completion now handles both.
 # async def deepseek_chat(...): ...
 # async def qwen_chat(...): ... 
+
+async def get_llm_response(prompt: str, use_chutes: bool = True) -> str:
+    """
+    Wrapper function to call the LLM service.
+    This function is provided for compatibility with modules expecting `get_llm_response`.
+    It currently delegates to LLMService.get_response.
+    """
+    return await LLMService.get_response(prompt, use_chutes=use_chutes) 

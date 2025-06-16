@@ -57,7 +57,7 @@ import draggable from "vuedraggable";
 import BAActivityHeatmap from "../components/BAActivityHeatmap.vue";
 import BABehaviorList from "../components/BABehaviorList.vue";
 import BABehaviorChart from "../components/BABehaviorChart.vue";
-import BARealTimeMonitoring from "../components/BARealTimeMonitoring.vue";
+import BAAppUsage from "../components/BAAppUsage.vue";
 
 const initialLoading = ref(true);
 const MAX_ALERTS_DISPLAY = 200;
@@ -72,8 +72,7 @@ const behaviorData = ref({
   timeSeries: {
     labels: [],
     datasets: []
-  },
-  heatmapData: []
+  }
 });
 
 let alertWs = null;
@@ -226,14 +225,7 @@ function processAlertsAndUpdateData() {
         datasets: slicedDatasets,
     };
 
-    const heatmapResult = [];
-    for (let h = 0; h < 24; h++) {
-        heatmapResult.push({
-            hour: h,
-            count: hourlyCounts[h] || 0
-        });
-    }
-    behaviorData.value.heatmapData = heatmapResult;
+    // Heatmap data removed - now using keyword cloud component
 }
 
 // WebSocket connection function for alerts
@@ -247,7 +239,7 @@ function connectAlertWebSocket() {
   const wsUrl = `${protocol}//${window.location.host}/alerts`;
   wsError.value = false;
   initialLoading.value = true;
-
+  
   console.log("Attempting to connect to Alert WebSocket:", wsUrl);
   alertWs = new WebSocket(wsUrl);
 
@@ -338,7 +330,7 @@ const componentMap = {
   1: { component: BAActivityHeatmap, class: "activity-heatmap-panel" },
   2: { component: BABehaviorList, class: "behavior-timeseries-panel" },
   3: { component: BABehaviorChart, class: "behavior-chart-panel" },
-  4: { component: BARealTimeMonitoring, class: "behavior-analysis-panel" },
+  4: { component: BAAppUsage, class: "app-usage-panel" },
 };
 
 function getComponentName(panelId) {
@@ -364,7 +356,7 @@ function getPanelClass(panelId) {
 function getComponentProps(panelId) {
   switch (panelId) {
     case 1:
-      return { heatmapData: behaviorData.value.heatmapData };
+      return {}; // Keywords component doesn't need external props, it fetches its own data
     case 2:
       return { timeSeriesData: behaviorData.value.timeSeries };
     case 3:
@@ -632,21 +624,34 @@ onUnmounted(() => {
 .panel {
   margin: 0 !important;
   box-sizing: border-box;
-  background-color: rgba(10, 25, 47, 0.7);
-  border: 1px solid rgba(79, 209, 197, 0.3);
-  border-radius: 5px;
-  box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
+  background: linear-gradient(135deg, 
+    rgba(10, 25, 47, 0.95) 0%, 
+    rgba(15, 35, 65, 0.95) 50%,
+    rgba(20, 45, 80, 0.95) 100%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(79, 209, 197, 0.2);
+  border-radius: 12px;
+  box-shadow: 
+    0 10px 30px rgba(0, 0, 0, 0.3),
+    0 0 20px rgba(79, 209, 197, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+  transition: box-shadow 0.3s ease, border-color 0.3s ease, transform 0.25s ease;
   position: relative;
   transform: translateZ(0);
 }
 
 .panel:hover {
-  box-shadow: 0 0 20px rgba(79, 209, 197, 0.2);
-  border-color: rgba(79, 209, 197, 0.5);
+  transform: translateY(-5px) scale(1.01) translateZ(0);
+  box-shadow: 
+    0 15px 40px rgba(0, 0, 0, 0.4),
+    0 0 25px rgba(79, 209, 197, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  border-color: rgba(79, 209, 197, 0.4);
+  z-index: 10;
 }
 
 /* Cyber Panel Decoration */
@@ -661,7 +666,7 @@ onUnmounted(() => {
   border-right: 2px solid var(--cyber-neon);
   opacity: 0.7;
   pointer-events: none;
-  border-radius: 0 5px 0 0;
+  border-radius: 0 12px 0 0;
 }
 
 .cyber-panel::after {
@@ -675,7 +680,7 @@ onUnmounted(() => {
   border-left: 2px solid var(--cyber-neon);
   opacity: 0.7;
   pointer-events: none;
-  border-radius: 0 0 0 5px;
+  border-radius: 0 0 0 12px;
 }
 
 /* Drag and Drop Styles */
@@ -735,10 +740,10 @@ onUnmounted(() => {
   width: 15px;
   height: 15px;
 }
-.resize-se { bottom: 0; right: 0; cursor: s-resize; border-radius: 0 0 5px 0; }
-.resize-sw { bottom: 0; left: 0; cursor: s-resize; border-radius: 0 0 0 5px; }
-.resize-ne { top: 0; right: 0; cursor: n-resize; border-radius: 0 5px 0 0; }
-.resize-nw { top: 0; left: 0; cursor: n-resize; border-radius: 5px 0 0 0; }
+.resize-se { bottom: 0; right: 0; cursor: s-resize; border-radius: 0 0 8px 0; }
+.resize-sw { bottom: 0; left: 0; cursor: s-resize; border-radius: 0 0 0 8px; }
+.resize-ne { top: 0; right: 0; cursor: n-resize; border-radius: 0 8px 0 0; }
+.resize-nw { top: 0; left: 0; cursor: n-resize; border-radius: 8px 0 0 0; }
 
 /* Add or adjust styles for the new time series panel if needed */
 .behavior-timeseries-panel {
@@ -752,7 +757,7 @@ onUnmounted(() => {
 .behavior-chart-panel {
   /* styles for doughnut panel */
 }
-.behavior-analysis-panel {
-  /* styles for monitoring panel */
+.app-usage-panel {
+  /* styles for the new app usage panel */
 }
 </style>

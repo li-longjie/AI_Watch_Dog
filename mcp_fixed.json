@@ -1,0 +1,43 @@
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    },
+    "time": {
+      "command": "uvx",
+      "args": ["mcp-server-time", "--local-timezone=Asia/Shanghai"]
+    },
+    "duckduckgo-search": {
+      "command": "uvx",
+      "args": ["duckduckgo-mcp-server"]
+    },
+    "browser-use": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "C:\\Users\\Jason\\PycharmProjects\\mcp-browser-use",
+        "run",
+        "src\\mcp_server_browser_use\\server.py"
+      ],
+      "env":{
+        "MCP_API_KEY":"sk-5de1d410783e4cf4a80fabca647a2477",
+        "MCP_MODEL_PROVIDER":"deepseek",
+        "MCP_MODEL_NAME":"deepseek-chat",
+        "MCP_HEADLESS":"false",
+        "BROWSER_USE_LOGGING_LEVEL":"INFO",
+        "PYTHONIOENCODING":"utf-8",
+        "PYTHONUNBUFFERED":"1",
+        "PYTHONUTF8":"1"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:\\Users\\Jason\\Desktop"
+      ]
+    }
+  }
+} 

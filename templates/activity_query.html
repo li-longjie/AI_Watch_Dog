@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>屏幕活动查询</title>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .query-form {
+            margin-bottom: 20px;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 5px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        select, input, textarea, button {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .result {
+            padding: 20px;
+            background: #f0f7ff;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            margin-top: 20px;
+        }
+        .custom-question {
+            display: none;
+        }
+        .stats {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 10px;
+            text-align: right;
+        }
+        .loading {
+            text-align: center;
+            display: none;
+            margin: 20px 0;
+        }
+        .loading:after {
+            content: "⏳";
+            animation: loading 1.5s infinite;
+            font-size: 24px;
+        }
+        @keyframes loading {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>智能屏幕活动助手</h1>
+        
+        <div class="query-form">
+            <div class="form-group">
+                <label for="query-type">查询类型：</label>
+                <select id="query-type">
+                    <option value="free">自由总结（过去活动概述）</option>
+                    <option value="software">我使用了哪些软件？</option>
+                    <option value="websites">我访问了哪些网页？</option>
+                    <option value="custom">自定义问题</option>
+                </select>
+            </div>
+            
+            <div class="form-group custom-question">
+                <label for="custom-question">自定义问题：</label>
+                <textarea id="custom-question" rows="3" placeholder="例如：我今天在VS Code中写了什么代码？"></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="time-range">时间范围（分钟）：</label>
+                <input type="number" id="time-range" min="1" max="120" value="5">
+            </div>
+            
+            <button id="query-btn">查询</button>
+            <button id="refresh-btn">刷新数据</button>
+        </div>
+        
+        <div class="loading" id="loading"></div>
+        
+        <div class="result" id="result">
+            <p>查询结果将显示在这里...</p>
+        </div>
+        
+        <div class="stats" id="stats"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const queryTypeSelect = document.getElementById('query-type');
+            const customQuestionDiv = document.querySelector('.custom-question');
+            const customQuestionInput = document.getElementById('custom-question');
+            const timeRangeInput = document.getElementById('time-range');
+            const queryBtn = document.getElementById('query-btn');
+            const refreshBtn = document.getElementById('refresh-btn');
+            const resultDiv = document.getElementById('result');
+            const statsDiv = document.getElementById('stats');
+            const loadingDiv = document.getElementById('loading');
+            
+            // 显示/隐藏自定义问题输入框
+            queryTypeSelect.addEventListener('change', function() {
+                if (this.value === 'custom') {
+                    customQuestionDiv.style.display = 'block';
+                } else {
+                    customQuestionDiv.style.display = 'none';
+                }
+            });
+            
+            // 查询按钮点击事件
+            queryBtn.addEventListener('click', async function() {
+                // 显示加载动画
+                loadingDiv.style.display = 'block';
+                resultDiv.innerHTML = '<p>正在查询中，请稍候...</p>';
+                statsDiv.innerHTML = '';
+                
+                const queryType = queryTypeSelect.value;
+                const timeRange = timeRangeInput.value;
+                const customQuestion = customQuestionInput.value;
+                
+                try {
+                    const response = await fetch('/api/query', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            query_type: queryType,
+                            time_range: timeRange,
+                            custom_question: customQuestion
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    // 隐藏加载动画
+                    loadingDiv.style.display = 'none';
+                    
+                    // 显示结果
+                    resultDiv.innerHTML = `<p>${data.result.replace(/\n/g, '<br>')}</p>`;
+                    
+                    // 显示统计信息
+                    statsDiv.innerHTML = `
+                        <p>查询时间: ${data.query_time} | 时间范围: 过去 ${data.time_range} 分钟 | 本次索引新记录: ${data.new_records} 条</p>
+                    `;
+                } catch (error) {
+                    loadingDiv.style.display = 'none';
+                    resultDiv.innerHTML = `<p>查询出错: ${error.message}</p>`;
+                }
+            });
+            
+            // 刷新数据按钮点击事件
+            refreshBtn.addEventListener('click', async function() {
+                try {
+                    refreshBtn.disabled = true;
+                    refreshBtn.textContent = '刷新中...';
+                    
+                    const response = await fetch('/api/refresh', {
+                        method: 'POST'
+                    });
+                    
+                    const data = await response.json();
+                    
+                    statsDiv.innerHTML = `
+                        <p>数据刷新成功 | 时间: ${data.refresh_time} | 新增记录: ${data.new_records} 条</p>
+                    `;
+                } catch (error) {
+                    statsDiv.innerHTML = `<p>数据刷新出错: ${error.message}</p>`;
+                } finally {
+                    refreshBtn.disabled = false;
+                    refreshBtn.textContent = '刷新数据';
+                }
+            });
+        });
+    </script>
+</body>
+</html>

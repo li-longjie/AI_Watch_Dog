@@ -1,9 +1,9 @@
 <template>
-  <div>
-    <div class="panel-title">
-      <span class="panel-icon">⏱️</span>
-      行为时间趋势
-      <div class="panel-decoration"></div>
+  <div class="behavior-list-panel-container">
+    <div class="panel-header">
+      <h3 class="panel-title">
+        <i class="fas fa-chart-line"></i> 行为时间趋势
+      </h3>
     </div>
     <div class="chart-container">
       <canvas ref="timeSeriesChartCanvas"></canvas>
@@ -225,22 +225,31 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.panel-title {
-  padding: 10px 15px;
-  font-size: 1.1rem;
-  color: var(--cyber-neon);
-  border-bottom: 1px solid rgba(79, 209, 197, 0.3);
+.behavior-list-panel-container {
   display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 15px 20px;
+  box-sizing: border-box;
+}
+.panel-header {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  position: relative;
-  letter-spacing: 1px;
-  text-shadow: 0 0 5px rgba(79, 209, 197, 0.3);
+  margin-bottom: 15px;
+  padding: 0;
+  flex-shrink: 0;
+}
+.panel-title {
+  font-size: 1.3rem;
+  color: var(--cyber-neon);
+  margin: 0;
+  text-shadow: 0 0 5px rgba(79, 209, 197, 0.7);
   cursor: move;
   user-select: none;
-  z-index: 5;
 }
-.panel-icon {
-  margin-right: 8px;
+.panel-title i {
+  margin-right: 10px;
 }
 
 /* Reuse chart container style */
@@ -248,10 +257,10 @@ onBeforeUnmount(() => {
   position: relative;
   width: 100%;
   height: calc(100% - 45px); /* Adjust based on title height */
-  padding: 15px; /* Add padding around the chart */
+  padding: 0; /* Add padding around the chart */
   box-sizing: border-box;
-  background-color: rgba(10, 25, 47, 0.7); /* Same background */
-  border-radius: 0 0 5px 5px; /* Match panel rounding */
+  background: transparent; /* Let parent panel handle background */
+  border-radius: 0 0 12px 12px; /* Match panel rounding */
   display: flex; /* Center canvas if needed, though chartjs handles size */
   justify-content: center;
   align-items: center;
@@ -286,7 +295,7 @@ canvas {
   bottom: 0; left: 0; width: 100%; height: 8px; cursor: s-resize;
 }
 .resize-sw {
-  bottom: 0; left: 0; width: 15px; height: 15px; cursor: s-resize; border-radius: 0 0 0 5px;
+  bottom: 0; left: 0; width: 15px; height: 15px; cursor: s-resize; border-radius: 0 0 0 8px;
 }
 
 </style>

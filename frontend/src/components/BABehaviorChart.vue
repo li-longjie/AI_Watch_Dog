@@ -1,9 +1,9 @@
 <template>
-  <div>
-    <div class="panel-title">
-      <span class="panel-icon">🎯</span>
-      行为分布
-      <div class="panel-decoration"></div>
+  <div class="behavior-chart-panel-container">
+    <div class="panel-header">
+      <h3 class="panel-title">
+        <i class="fas fa-bullseye"></i> 行为分布
+      </h3>
     </div>
     <div class="chart-container">
       <div class="chart-display-area">
@@ -173,17 +173,7 @@ function renderPieChart() {
       },
       plugins: {
         legend: {
-          position: "bottom",
-          align: 'start', // Align legend items to the start (left) within the bottom area
-          labels: {
-            color: "rgba(255, 255, 255, 0.8)",
-            font: { size: 11, weight: "normal" },
-            boxWidth: 10,
-            boxHeight: 10,
-            padding: 8, // Reduced padding between items
-            usePointStyle: true,
-            pointStyle: "rectRounded",
-          },
+          display: false, // 禁用Chart.js默认图例，使用自定义HTML图例
         },
         tooltip: {
           enabled: true,
@@ -258,67 +248,77 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.panel-title {
-  padding: 10px 15px;
-  font-size: 1.1rem;
-  color: var(--cyber-neon);
-  border-bottom: 1px solid rgba(79, 209, 197, 0.3);
+.behavior-chart-panel-container {
   display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 15px 20px;
+  box-sizing: border-box;
+}
+.panel-header {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  position: relative;
-  letter-spacing: 1px;
-  text-shadow: 0 0 5px rgba(79, 209, 197, 0.3);
+  margin-bottom: 15px;
+  padding: 0;
+  flex-shrink: 0;
+}
+.panel-title {
+  font-size: 1.3rem;
+  color: var(--cyber-neon);
+  margin: 0;
+  text-shadow: 0 0 5px rgba(79, 209, 197, 0.7);
   cursor: move;
   user-select: none;
-  z-index: 5;
 }
-
-.panel-icon {
-  margin-right: 8px;
+.panel-title i {
+    margin-right: 10px;
 }
 
 .chart-container {
   position: relative;
   width: 100%;
   height: calc(100% - 45px);
-  padding: 10px 15px 10px 15px; /* Keep padding */
+  padding: 0 0 10px 0; /* 底部增加padding为图例留空间 */
   box-sizing: border-box;
-  display: flex; /* Use flex for centering no-data message */
+  display: flex;
   justify-content: center;
   align-items: center;
-  background-color: rgba(10, 25, 47, 0.7);
-  border-radius: 0 0 5px 5px;
+  background: transparent;
+  border-radius: 0 0 12px 12px;
 }
 
 /* New Flex Container for chart and info box */
 .chart-display-area {
     display: flex;
-    align-items: stretch; /* Align items vertically */
-    justify-content: center; /* Instead of space-between */
+    align-items: stretch;
+    justify-content: center;
     width: 100%;
     height: 100%;
-    gap: 15px; /* Reduce or adjust as needed */
+    gap: 15px;
+    min-height: 250px; /* 设置最小高度确保有足够显示空间 */
 }
 
 /* Wrapper for the Doughnut chart canvas */
 .doughnut-wrapper {
-    flex: 0 1 60%; /* Allow shrinking, basis 60% */
+    flex: 0 1 60%;
     display: flex;
     flex-direction: column;
-    align-items: center; /* Keep horizontal centering */
+    align-items: center;
     height: 100%;
     position: relative;
     min-height: 0;
-    max-width: 300px; /* Adjust max-width as needed */
+    max-width: 300px;
+    padding-bottom: 5px; /* 为图例预留空间 */
 }
 
 .pie-chart-canvas {
     display: block;
     max-width: 100%;
     width: auto;
-    flex-grow: 1; /* Allow canvas to take up vertical space */
-    max-height: none; /* Remove fixed max-height */
-    margin-bottom: 5px; /* Reduce space between chart and legend */
+    flex-grow: 1;
+    max-height: calc(100% - 40px); /* 为图例预留40px空间 */
+    margin-bottom: 8px; /* 增加与图例之间的间距 */
     filter: drop-shadow(0 0 8px rgba(79, 209, 197, 0.2))
             drop-shadow(0 4px 6px rgba(0, 0, 0, 0.4));
 }
@@ -421,20 +421,21 @@ onBeforeUnmount(() => {
   top: 0; left: 0; width: 100%; height: 8px; cursor: n-resize;
 }
 .resize-ne {
-  top: 0; right: 0; width: 15px; height: 15px; cursor: n-resize; border-radius: 0 5px 0 0;
+  top: 0; right: 0; width: 15px; height: 15px; cursor: n-resize; border-radius: 0 8px 0 0;
 }
 
 /* --- Custom Legend Styles --- */
 .custom-legend {
     display: flex;
-    flex-wrap: wrap; /* Allow items to wrap */
-    justify-content: center; /* Center items horizontally */
-    gap: 4px 8px; /* Slightly reduce legend gap */
-    padding: 0; /* Remove extra padding */
-    width: 100%; /* Take full width of the wrapper */
-    max-width: 250px; /* Optional: limit max width of legend area */
-    flex-shrink: 0; /* Prevent legend from shrinking */
-    margin-top: 5px; /* Space above legend */
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px 12px; /* 增加间距，避免文字挤在一起 */
+    padding: 8px 4px; /* 增加内边距 */
+    width: 100%;
+    max-width: 280px; /* 增加最大宽度 */
+    flex-shrink: 0;
+    margin-top: 8px; /* 增加上边距 */
+    min-height: 25px; /* 设置最小高度确保有足够空间 */
 }
 
 .legend-item {
@@ -453,9 +454,10 @@ onBeforeUnmount(() => {
 }
 
 .legend-label-text {
-    font-size: 0.75rem; /* 12px */
+    font-size: 0.8rem; /* 稍微增大字体，提高可读性 */
     color: var(--text-secondary);
     white-space: nowrap;
+    line-height: 1.2; /* 增加行高 */
 }
 /* --- End Custom Legend Styles --- */
 </style>
