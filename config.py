@@ -41,21 +41,18 @@ class APIConfig:
     # QWEN_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1" # DashScope endpoint
     # QWEN_MODEL = "qwen2.5-vl-3b-instruct" # DashScope Qwen model name
 
-    # --- 硅基流动 (SiliconFlow) / Chutes.ai / OpenRouter 通用配置 ---
+    # --- 硅基流动 (SiliconFlow) 统一配置 ---
     # 从环境变量中读取API密钥，如果未设置，则使用占位符
-    QWEN_API_KEY = os.getenv("QWEN_API_KEY", "YOUR_QWEN_API_KEY_HERE")
-    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "YOUR_DEEPSEEK_API_KEY_HERE")
+    QWEN_API_KEY = os.getenv("SILICONFLOW_API_KEY", "sk-xugvbuiyayzzfeoelfytnfioimnwvzouawxlavixynzuloui")
+    DEEPSEEK_API_KEY = os.getenv("SILICONFLOW_API_KEY", "sk-xugvbuiyayzzfeoelfytnfioimnwvzouawxlavixynzuloui")
 
-    # 根据需要选择API服务商
-    # 硅基流动 (SiliconFlow)
+    # 硅基流动 (SiliconFlow) for Qwen
     QWEN_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
     QWEN_MODEL = "Pro/Qwen/Qwen2.5-VL-7B-Instruct"
-    DEEPSEEK_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-    DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V3-0324"
 
-    # Chutes.ai
-    # DEEPSEEK_API_URL = "https://llm.chutes.ai/v1/chat/completions"
-    # DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V3-0324"
+    # 硅基流动 (SiliconFlow) for DeepSeek
+    DEEPSEEK_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
+    DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V3"
 
     # OpenRouter
     # QWEN_API_KEY = os.getenv("OPENROUTER_API_KEY", "YOUR_OPENROUTER_API_KEY_HERE")
@@ -66,10 +63,9 @@ class APIConfig:
     # DEEPSEEK_MODEL = "deepseek/deepseek-chat-v3-0324:free"
     
     # 检查环境变量是否已设置
-    if QWEN_API_KEY.startswith("YOUR_"):
-        print("警告: Qwen API Key 未通过环境变量'QWEN_API_KEY'配置。")
-    if DEEPSEEK_API_KEY.startswith("YOUR_"):
-        print("警告: DeepSeek API Key 未通过环境变量'DEEPSEEK_API_KEY'配置。")
+    if QWEN_API_KEY.startswith("YOUR_") or DEEPSEEK_API_KEY.startswith("YOUR_"):
+        print("警告: 硅基流动 API Key 未通过环境变量'SILICONFLOW_API_KEY'配置。")
+        print("提示: 当前使用默认的硅基流动API密钥，如需更换请设置环境变量 SILICONFLOW_API_KEY")
 
     # API请求通用配置
     REQUEST_TIMEOUT = 60.0  # 请求超时时间（秒）
@@ -107,24 +103,20 @@ LOG_CONFIG = {
     ]
 }
 
-# 阿里云 OSS 配置 (可选)
+# 阿里云OSS配置
 class OSSConfig:
-    # 强烈建议使用环境变量来存储敏感信息
-    # 在您的操作系统中设置环境变量 'OSS_ACCESS_KEY_ID' 和 'OSS_ACCESS_KEY_SECRET'
-    ACCESS_KEY_ID = os.getenv("OSS_ACCESS_KEY_ID", "YOUR_ALIYUN_ACCESS_KEY_ID")
-    ACCESS_KEY_SECRET = os.getenv("OSS_ACCESS_KEY_SECRET", "YOUR_ALIYUN_ACCESS_KEY_SECRET")
-    
-    # 检查环境变量是否已设置
-    if ACCESS_KEY_ID == "YOUR_ALIYUN_ACCESS_KEY_ID" or not ACCESS_KEY_ID:
-        print("警告: 阿里云 ACCESS_KEY_ID 未通过环境变量配置，将使用 config.py 中的默认值。")
-    if ACCESS_KEY_SECRET == "YOUR_ALIYUN_ACCESS_KEY_SECRET" or not ACCESS_KEY_SECRET:
-        print("警告: 阿里云 ACCESS_KEY_SECRET 未通过环境变量配置，将使用 config.py 中的默认值。")
-
-    ENDPOINT = "oss-cn-beijing.aliyuncs.com"
-    BUCKET_NAME = "ai-watch-dog"
+    ENABLED = True  # 强制启用OSS，不使用回退
+    ACCESS_KEY_ID = os.getenv("OSS_ACCESS_KEY_ID", "")
+    ACCESS_KEY_SECRET = os.getenv("OSS_ACCESS_KEY_SECRET", "")
+    ENDPOINT = os.getenv("OSS_ENDPOINT", "oss-cn-beijing.aliyuncs.com")
+    BUCKET = os.getenv("OSS_BUCKET", "")
     # 用于存储的路径前缀
     ALERT_PREFIX = 'video_warning/'
     ANALYSIS_PREFIX = 'analysis_frames/'
+    
+    # 检查OSS配置是否完整
+    if not ACCESS_KEY_ID or not ACCESS_KEY_SECRET or not BUCKET:
+        print("警告: OSS配置不完整，请检查 .env 文件中的 OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET, OSS_BUCKET 配置")
 
 def update_config(args: Dict[str, Any]) -> None:
     """使用命令行参数更新配置

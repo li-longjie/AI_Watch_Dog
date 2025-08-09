@@ -122,7 +122,7 @@ async def chat_completion(prompt: str, model: str = "deepseek", temperature: flo
     else:  # 默认使用deepseek
         api_key = APIConfig.DEEPSEEK_API_KEY
         model_name = APIConfig.DEEPSEEK_MODEL
-    api_url = APIConfig.DEEPSEEK_API_URL
+        api_url = APIConfig.DEEPSEEK_API_URL
 
     headers = {
         "Authorization": f"Bearer {api_key}",

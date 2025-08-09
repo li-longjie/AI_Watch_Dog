@@ -14,22 +14,23 @@ logger = logging.getLogger(__name__)
 class ToolRegistry:
     """工具注册表类"""
     
-    def __init__(self):
+    def __init__(self, mcp_base_url: str = None):  # 接受可选参数
+        self.mcp_base_url = mcp_base_url or "http://127.0.0.1:8000"
         self.tools: Dict[str, BaseMCPTool] = {}
         self._initialize_tools()
     
     def _initialize_tools(self):
         """初始化所有工具"""
         try:
-            # 注册所有工具
+            # 注册所有工具，传递base_url参数
             self.tools = {
-                "web": FetchTool(),
-                "time": TimeTool(),
-                "filesystem": FilesystemTool(),
-                "browser": BrowserTool(),
-                "sequential_thinking": SequentialThinkingTool(),
-                "duckduckgo": DuckDuckGoTool(),
-                "baidu_map": BaiduMapTool()
+                "web": FetchTool(self.mcp_base_url),
+                "time": TimeTool(self.mcp_base_url),
+                "filesystem": FilesystemTool(self.mcp_base_url),
+                "browser": BrowserTool(self.mcp_base_url),
+                "sequential_thinking": SequentialThinkingTool(self.mcp_base_url),
+                "duckduckgo": DuckDuckGoTool(self.mcp_base_url),
+                "baidu_map": BaiduMapTool(self.mcp_base_url)
             }
             
             logger.info(f"已注册 {len(self.tools)} 个MCP工具")
@@ -134,6 +135,56 @@ class ToolRegistry:
     def list_all_tools(self) -> List[Dict[str, Any]]:
         """列出所有工具的信息"""
         return [self.get_tool_info(tool_id) for tool_id in self.tools.keys()]
+    
+    def format_tools_for_llm(self) -> str:
+        """格式化所有工具信息供LLM理解"""
+        formatted_tools = []
+        
+        for tool_id, tool in self.tools.items():
+            tool_info = tool.format_for_llm()
+            formatted_tools.append(tool_info)
+        
+        return "\n\n".join(formatted_tools)
+    
+    async def execute_tool_function(self, tool_name: str, function_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """执行指定工具的函数"""
+        try:
+            tool = self.get_tool(tool_name)
+            if not tool:
+                return {
+                    "status": "error",
+                    "message": f"工具 '{tool_name}' 不存在"
+                }
+            
+            # 执行工具函数
+            result = await tool.execute_function(function_name, parameters)
+            return result
+            
+        except Exception as e:
+            logger.error(f"执行工具函数失败: {tool_name}.{function_name} - {e}")
+            return {
+                "status": "error",
+                "message": f"执行工具函数失败: {str(e)}"
+            }
+    
+    def get_tools_schema(self) -> Dict[str, Any]:
+        """获取所有工具的schema信息"""
+        schemas = {}
+        for tool_id, tool in self.tools.items():
+            schemas[tool_id] = tool.get_tool_schema()
+        return schemas
+    
+    def get_tool_usage_examples(self) -> Dict[str, List[str]]:
+        """获取所有工具的使用示例"""
+        examples = {}
+        for tool_id, tool in self.tools.items():
+            tool_examples = []
+            functions = tool.get_available_functions()
+            for func_name, func_info in functions.items():
+                if 'examples' in func_info:
+                    tool_examples.extend(func_info['examples'])
+            examples[tool_id] = tool_examples
+        return examples
 
 # 全局工具注册表实例
 tool_registry = ToolRegistry() 
