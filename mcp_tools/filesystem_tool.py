@@ -310,6 +310,10 @@ class FilesystemTool(BaseMCPTool):
         if match_named_folder_direct:
             return os.path.join(desktop_path_base, match_named_folder_direct.group(1).strip())
         
+        # 处理单独的"桌面"关键词
+        if user_input.lower() in ["桌面", "desktop"]:
+            return desktop_path_base
+        
         # 绝对路径
         if os.path.isabs(user_input):
             return user_input.replace('/', '\\')
@@ -340,11 +344,13 @@ class FilesystemTool(BaseMCPTool):
                         if response.status_code == 200:
                             result = response.json()
                             
+                            # 检查响应是否为错误格式
                             if isinstance(result, dict) and "error" in result:
                                 continue  # 尝试下一个端点
                             
-                            # 格式化返回结果
-                            return await self._format_directory_listing(result, path)
+                            # MCP filesystem服务返回字符串格式的目录列表，这是正常的
+                            if result:  # 如果有返回内容，就是成功的
+                                return await self._format_directory_listing(result, path)
                             
                 except Exception as e:
                     self.logger.warning(f"尝试端点 {endpoint} 失败: {str(e)}")
@@ -568,12 +574,43 @@ class FilesystemTool(BaseMCPTool):
             else:
                 full_path = self._parse_path(os.path.join(location, file_name))
             
-            # 使用写入文件功能创建
-            return await self._write_file({
-                "file_path": full_path,
-                "content": content,
-                "mode": "overwrite"
-            })
+            # 检查是否为Office文件格式
+            office_extensions = ('.docx', '.xlsx', '.pdf', '.doc', '.xls', '.pptx', '.ppt')
+            if full_path.lower().endswith(office_extensions):
+                # 对于Office文件，直接调用文件系统服务创建空文件
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(
+                        f"{self.base_url}/filesystem/write_file",
+                        json={"path": full_path, "content": ""}
+                    )
+                    
+                    if response.status_code != 200:
+                        return {
+                            "status": "error",
+                            "message": f"创建Office文件失败: HTTP {response.status_code}"
+                        }
+                    
+                    result = response.json()
+                    
+                    if isinstance(result, dict) and "error" in result:
+                        return {
+                            "status": "error",
+                            "message": result["error"]
+                        }
+                    
+                    return {
+                        "status": "success",
+                        "file_path": full_path,
+                        "file_type": "office_document",
+                        "message": f"已创建Office文件: {file_name}。请使用相应的Office软件打开和编辑。"
+                    }
+            else:
+                # 对于普通文本文件，使用原来的写入文件功能
+                return await self._write_file({
+                    "file_path": full_path,
+                    "content": content,
+                    "mode": "overwrite"
+                })
             
         except Exception as e:
             self.logger.error(f"创建文件错误: {e}")

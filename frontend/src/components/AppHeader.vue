@@ -67,7 +67,7 @@
       <span class="title-flicker">融合AI-Agent的多模态行为监控系统</span>
       <div class="circuit-decoration circuit-left"></div>
       <div class="circuit-decoration circuit-right"></div>
-      <div class="title-badge badge-left">v2.1</div>
+      <div class="title-badge badge-left">V1.0</div>
       <div class="title-badge badge-right">secure</div>
     </h1>
     <div class="header-arrow-right">&gt; &gt; &gt; &gt;</div>

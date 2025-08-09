@@ -73,9 +73,27 @@ class FetchTool(BaseMCPTool):
                 )
                 
                 if response.status_code != 200:
+                    error_detail = ""
+                    try:
+                        error_response = response.json()
+                        if "detail" in error_response:
+                            detail = error_response["detail"]
+                            if isinstance(detail, dict) and "error" in detail:
+                                error_msg = detail["error"]
+                                if "robots.txt" in error_msg:
+                                    return {
+                                        "status": "error",
+                                        "message": f"该网站禁止自动抓取内容 (robots.txt限制): {url}",
+                                        "error_type": "robots_blocked",
+                                        "suggestion": "请尝试访问其他允许爬取的网站，或使用浏览器工具进行交互式访问"
+                                    }
+                                error_detail = f" - {error_msg[:200]}..."
+                    except:
+                        pass
+                    
                     return {
                         "status": "error",
-                        "message": f"无法获取网页内容: HTTP {response.status_code}"
+                        "message": f"无法获取网页内容: HTTP {response.status_code}{error_detail}"
                     }
                 
                 web_content = response.json()

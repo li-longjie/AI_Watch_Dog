@@ -2,6 +2,7 @@ import httpx
 import requests
 import traceback
 import re
+import json
 from typing import Dict, Any, List
 from .base_tool import BaseMCPTool
 
@@ -111,12 +112,23 @@ class BaiduMapTool(BaseMCPTool):
                     "interests": {
                         "type": "string",
                         "description": "兴趣偏好，如历史文化、自然风光等",
-                        "required": False
+                         "required": False
+                      },
+                      "origin": {
+                          "type": "string",
+                          "description": "可选，若提供则同时规划此起点到destination的交通方式",
+                          "required": False
+                      },
+                      "destination": {
+                          "type": "string",
+                          "description": "可选，与origin一起使用，展示两地交通方式对比与方案",
+                          "required": False
                     }
                 },
                 "examples": [
                     "制定北京一日游行程",
-                    "规划杭州2天旅游路线",
+                     "规划杭州2天旅游路线",
+                     "北京一日游（从北京站到天安门的交通方式也给我列一下）",
                     "安排上海周末游玩计划"
                 ]
             }
@@ -159,12 +171,16 @@ class BaiduMapTool(BaseMCPTool):
             if result.get("status") == "error":
                 return result
             
+            # 生成结构化概览文本，便于前端直接展示
+            formatted_response = self._format_route_planning_response(origin, destination, result)
+
             return {
                 "status": "success",
                 "route_data": result,
                 "origin": origin,
                 "destination": destination,
-                "mode": mode
+                "mode": mode,
+                "formatted_response": formatted_response
             }
             
         except Exception as e:
@@ -291,6 +307,8 @@ class BaiduMapTool(BaseMCPTool):
             location = parameters.get("location")
             duration = parameters.get("duration", "1天")
             interests = parameters.get("interests", "")
+            origin_place = parameters.get("origin") or parameters.get("from")
+            destination_place = parameters.get("destination") or parameters.get("to")
             
             if not location:
                 return {
@@ -300,13 +318,36 @@ class BaiduMapTool(BaseMCPTool):
             
             # 使用增强的旅游规划功能
             travel_result = await self._enhanced_travel_planning(location, duration, interests)
+
+            # 可选：两地交通方式（当提供origin/destination时）
+            transit_section = ""
+            transit_payload: Dict[str, Any] = {}
+            if origin_place and destination_place:
+                try:
+                    route_data = await self._enhanced_route_planning(origin_place, destination_place)
+                    if route_data.get("status") == "success":
+                        formatted = self._format_route_planning_response(origin_place, destination_place, route_data)
+                        if formatted:
+                            transit_section = f"\n\n## 两地交通方式\n\n{formatted}\n"
+                            transit_payload = {
+                                "origin": origin_place,
+                                "destination": destination_place,
+                                "formatted_response": formatted,
+                                "route_data": route_data
+                            }
+                except Exception as e:
+                    self.logger.warning(f"一日游附带交通方式生成失败: {e}")
             
+            # 拼接最终行程文案
+            final_plan = (transit_section + "\n" + travel_result) if transit_section else travel_result
+
             return {
                 "status": "success",
-                "travel_plan": travel_result,
+                "travel_plan": final_plan,
                 "location": location,
                 "duration": duration,
-                "interests": interests
+                "interests": interests,
+                "transit_between_points": transit_payload if transit_payload else None
             }
             
         except Exception as e:
@@ -458,9 +499,12 @@ class BaiduMapTool(BaseMCPTool):
                 
                 successful_routes = []
                 
+                # 提取城市信息（供公交方案使用）
+                city = self._extract_city_from_geocoding(origin_geo) or self._extract_city_from_geocoding(dest_geo)
+
                 for transport in transport_modes:
                     route_result = await self._get_route_for_mode(
-                        origin_coord, dest_coord, transport["mode"], transport["name"]
+                        origin_coord, dest_coord, transport["mode"], transport["name"], city
                     )
                     if route_result:
                         successful_routes.append(route_result)
@@ -561,7 +605,7 @@ class BaiduMapTool(BaseMCPTool):
                 "error": str(e)
             }
     
-    async def _get_route_for_mode(self, origin_coord: str, dest_coord: str, mode: str, mode_name: str) -> Dict[str, Any]:
+    async def _get_route_for_mode(self, origin_coord: str, dest_coord: str, mode: str, mode_name: str, city: str = "") -> Dict[str, Any]:
         """获取特定交通方式的路线"""
         try:
             endpoint = f"{self.base_url}/baidu-map/map_directions"
@@ -570,18 +614,26 @@ class BaiduMapTool(BaseMCPTool):
                 "destination": dest_coord,
                 "mode": mode
             }
+
+            # 公交换乘通常需要城市/区域上下文，尽可能传递，提升工具返回的详细度
+            if mode == "transit" and city:
+                request_body["city"] = city
+                request_body["region"] = city
             
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(endpoint, json=request_body)
                 
                 if response.status_code == 200:
                     result = response.json()
-                    route_info = self._parse_route_result(result, mode_name)
-                    if route_info:
+                    parse_result = self._parse_route_result(result, mode_name)
+                    if parse_result:
                         return {
                             "transport_mode": mode_name,
                             "mode": mode,
-                            "route_info": route_info,
+                            "route_info": parse_result.get("description") if isinstance(parse_result, dict) else str(parse_result),
+                            "distance_km": parse_result.get("distance_km") if isinstance(parse_result, dict) else None,
+                            "duration_min": parse_result.get("duration_min") if isinstance(parse_result, dict) else None,
+                            "steps_available": parse_result.get("steps_available") if isinstance(parse_result, dict) else False,
                             "raw_result": result
                         }
                 else:
@@ -592,15 +644,46 @@ class BaiduMapTool(BaseMCPTool):
         
         return None
     
-    def _parse_route_result(self, result: Dict[str, Any], transport_name: str) -> str:
+    def _parse_route_result(self, result: Dict[str, Any], transport_name: str) -> Dict[str, Any]:
         """解析路线结果"""
         try:
-            if not result or 'result' not in result:
-                return f"抱歉，无法获取{transport_name}路线信息"
+            # 增加调试信息
+            self.logger.info(f"解析{transport_name}路线结果: {json.dumps(result, ensure_ascii=False, indent=2)[:500]}...")
             
-            routes = result['result']['routes']
+            if not result:
+                return {
+                    "description": f"❌ {transport_name}：百度地图API无响应数据",
+                    "distance_km": None,
+                    "duration_min": None,
+                    "steps_available": False
+                }
+            
+            # 尝试多种数据格式路径
+            routes_data = None
+            if 'routes' in result:
+                routes_data = result['routes']  # 直接在根级别
+            elif 'result' in result and 'routes' in result['result']:
+                routes_data = result['result']['routes']
+            elif 'data' in result and 'routes' in result['data']:
+                routes_data = result['data']['routes']
+            
+            if not routes_data:
+                available_keys = list(result.keys())
+                return {
+                    "description": f"❌ {transport_name}：API数据格式异常，可用字段: {available_keys}",
+                    "distance_km": None,
+                    "duration_min": None,
+                    "steps_available": False
+                }
+            
+            routes = routes_data
             if not routes:
-                return f"未找到{transport_name}路线"
+                return {
+                    "description": f"📍 {transport_name}：暂无可用路线（可能超出服务范围）",
+                    "distance_km": None,
+                    "duration_min": None,
+                    "steps_available": False
+                }
             
             route = routes[0]
             
@@ -620,36 +703,132 @@ class BaiduMapTool(BaseMCPTool):
                 steps = route['steps']
                 step_descriptions = []
                 
-                for i, step in enumerate(steps):
-                    step_desc = ""
-                    
-                    if step.get('vehicle'):
-                        # 公交/地铁步骤
-                        vehicle = step['vehicle']
-                        if vehicle.get('type') == 5:  # 地铁
-                            line_name = vehicle.get('name', '地铁')
-                            step_desc = f"乘坐{line_name}"
-                        else:  # 公交
-                            line_name = vehicle.get('name', '公交')
-                            step_desc = f"乘坐{line_name}"
-                        
-                        # 添加上下车站点
-                        if step.get('start_location') and step.get('end_location'):
-                            start_name = step['start_location'].get('name', '')
-                            end_name = step['end_location'].get('name', '')
-                            if start_name and end_name:
-                                step_desc += f"，从{start_name}到{end_name}"
-                    
-                    elif 'instruction' in step:
-                        # 步行步骤
-                        instruction = step['instruction']
-                        step_desc = instruction.replace('步行', '步行')
-                    
-                    if step_desc:
-                        step_descriptions.append(f"• {step_desc}")
+                # 检查steps是否为空或包含空对象
+                valid_steps = [step for step in steps if step and isinstance(step, dict) and step != {}]
                 
-                if step_descriptions:
-                    description += "\n".join(step_descriptions)
+                if valid_steps:
+                    for i, step in enumerate(valid_steps):
+                        step_desc = ""
+                        
+                        if step.get('vehicle'):
+                            # 公交/地铁步骤
+                            vehicle = step['vehicle']
+                            if vehicle.get('type') == 5:  # 地铁
+                                line_name = vehicle.get('name', '地铁')
+                                step_desc = f"乘坐{line_name}"
+                            else:  # 公交
+                                line_name = vehicle.get('name', '公交')
+                                step_desc = f"乘坐{line_name}"
+                            
+                            # 添加上下车站点
+                            if step.get('start_location') and step.get('end_location'):
+                                start_name = step['start_location'].get('name', '')
+                                end_name = step['end_location'].get('name', '')
+                                if start_name and end_name:
+                                    step_desc += f"，从{start_name}到{end_name}"
+                        
+                        elif 'instruction' in step:
+                            # 步行步骤
+                            instruction = step['instruction']
+                            step_desc = instruction.replace('步行', '步行')
+                        
+                        if step_desc:
+                            step_descriptions.append(f"• {step_desc}")
+                    
+                    if step_descriptions:
+                        description += "\n".join(step_descriptions)
+                    else:
+                        # 有steps但无法解析具体内容
+                        description += f"\n⚠️ 包含{len(steps)}个步骤，但详细信息不可用"
+                else:
+                    # steps为空或都是空对象，尝试兼容 directionlite 风格：steps 为二维数组
+                    # 形如 steps: [ [ {instruction: ...} ], [ {vehicle_info: {...}} ], ... ]
+                    nested_steps_detected = False
+                    if isinstance(steps, list) and any(isinstance(s, list) for s in steps):
+                        nested_steps_detected = True
+                        extracted = []
+                        for group in steps:
+                            if not isinstance(group, list):
+                                continue
+                            for seg in group:
+                                if not isinstance(seg, dict):
+                                    continue
+                                seg_desc = ""
+                                vehicle_info = seg.get('vehicle_info') or seg.get('vehicle')
+                                if isinstance(vehicle_info, dict):
+                                    line_name = vehicle_info.get('name') or vehicle_info.get('line_name') or ''
+                                    vtype = vehicle_info.get('type')
+                                    start_name = vehicle_info.get('start_name') or vehicle_info.get('start_station') or ''
+                                    end_name = vehicle_info.get('end_name') or vehicle_info.get('end_station') or ''
+                                    if line_name:
+                                        # 粗分类型：5 可能为地铁，其余为公交（兼容未知类型）
+                                        if str(vtype) == '5':
+                                            seg_desc = f"乘坐{line_name}"
+                                        else:
+                                            seg_desc = f"乘坐{line_name}"
+                                        if start_name and end_name:
+                                            seg_desc += f"，从{start_name}到{end_name}"
+                                if not seg_desc and 'instruction' in seg:
+                                    seg_desc = str(seg.get('instruction'))
+                                if seg_desc:
+                                    extracted.append(f"• {seg_desc}")
+                        if extracted:
+                            description += "\n".join(extracted)
+                        else:
+                            description += f"\n⚠️ 路线步骤信息不可用（MCP服务限制）"
+                    else:
+                        # steps 为空或元素为空对象
+                        description += f"\n⚠️ 路线步骤信息不可用（MCP服务限制）"
+            else:
+                # 尝试兼容其他返回风格：如包含 transits/segments/lines 等字段
+                extracted = []
+                # 1) route.transits[*].segments[*].line/name/start/end
+                transits = route.get('transits') or route.get('schemes') or []
+                if isinstance(transits, list):
+                    for t in transits:
+                        segments = t.get('segments') or t.get('steps') or []
+                        for seg in segments:
+                            # 常见字段名兼容
+                            line = seg.get('line') or seg.get('bus_line') or seg.get('railway') or {}
+                            if isinstance(line, dict):
+                                line_name = line.get('name') or line.get('line_name') or line.get('title')
+                                start_station = line.get('departure_station') or line.get('start_station') or line.get('origin_station') or ''
+                                end_station = line.get('arrival_station') or line.get('end_station') or line.get('destination_station') or ''
+                                if line_name:
+                                    seg_text = f"乘坐{line_name}"
+                                    if start_station and end_station:
+                                        seg_text += f"，从{start_station}到{end_station}"
+                                    extracted.append(f"• {seg_text}")
+                            # 有些放在 seg['vehicle_info']
+                            vehicle_info = seg.get('vehicle_info')
+                            if isinstance(vehicle_info, dict):
+                                v_name = vehicle_info.get('name') or vehicle_info.get('line_name')
+                                v_start = vehicle_info.get('start_name') or vehicle_info.get('start_station')
+                                v_end = vehicle_info.get('end_name') or vehicle_info.get('end_station')
+                                if v_name:
+                                    txt = f"乘坐{v_name}"
+                                    if v_start and v_end:
+                                        txt += f"，从{v_start}到{v_end}"
+                                    extracted.append(f"• {txt}")
+                            # 纯 instruction 文本
+                            instr = seg.get('instruction') or seg.get('instruction_text')
+                            if instr:
+                                extracted.append(f"• {instr}")
+                # 2) 顶层 lines 数组
+                if not extracted and isinstance(route.get('lines'), list):
+                    for ln in route['lines']:
+                        if not isinstance(ln, dict):
+                            continue
+                        line_name = ln.get('name') or ln.get('line_name')
+                        s = ln.get('start_station') or ln.get('from')
+                        e = ln.get('end_station') or ln.get('to')
+                        if line_name:
+                            txt = f"乘坐{line_name}"
+                            if s and e:
+                                txt += f"，从{s}到{e}"
+                            extracted.append(f"• {txt}")
+                if extracted:
+                    description += "\n" + "\n".join(extracted)
             
             # 费用估算
             if transport_name == "公交":
@@ -660,11 +839,167 @@ class BaiduMapTool(BaseMCPTool):
                 fuel_cost = distance_km * 0.8
                 description += f"\n• 总费用：约{fuel_cost:.1f}元(油费)"
             
-            return description
+            return {
+                "description": description,
+                "distance_km": float(distance_km),
+                "duration_min": float(duration_min),
+                "steps_available": ("• " in description and "步骤" not in description) or ("乘坐" in description)
+            }
             
         except Exception as e:
             self.logger.error(f"解析{transport_name}路线时出错: {str(e)}")
-            return f"解析{transport_name}路线时出现错误"
+            return {
+                "description": f"解析{transport_name}路线时出现错误",
+                "distance_km": None,
+                "duration_min": None,
+                "steps_available": False
+            }
+
+    async def _fallback_directionlite_transit(self, origin_coord: str, dest_coord: str) -> str:
+        """当MCP方向接口不返回详细公交/地铁步骤时，直接调用百度 directionlite v1/transit 兜底。
+        仅在环境变量 BAIDU_MAP_API_KEY 存在时启用。返回可直接拼接到描述中的多行文本。
+        """
+        try:
+            api_key = os.environ.get("BAIDU_MAP_API_KEY")
+            if not api_key:
+                return ""
+
+            # origin/destination 为 "lat,lng" 或 "纬度,经度"，directionlite 需要 "lat,lng"
+            origin = origin_coord.replace(" ", "")
+            destination = dest_coord.replace(" ", "")
+
+            url = (
+                "https://api.map.baidu.com/directionlite/v1/transit"
+                f"?origin={origin}&destination={destination}&ak={api_key}"
+            )
+
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                r = await client.get(url)
+                if r.status_code != 200:
+                    return ""
+                data = r.json()
+                if not isinstance(data, dict) or data.get("status") != 0:
+                    return ""
+
+                routes = data.get("result", {}).get("routes", [])
+                if not routes:
+                    return ""
+                # 取第一条
+                rt = routes[0]
+                steps = rt.get("steps", [])
+                lines: list[str] = []
+                for group in steps:
+                    if not isinstance(group, list):
+                        continue
+                    for seg in group:
+                        if not isinstance(seg, dict):
+                            continue
+                        # 公交/地铁
+                        vehicle = seg.get("vehicle_info") or seg.get("vehicle") or {}
+                        line_name = vehicle.get("name") or vehicle.get("line_name")
+                        start_name = vehicle.get("start_name") or vehicle.get("start_station")
+                        end_name = vehicle.get("end_name") or vehicle.get("end_station")
+                        if line_name:
+                            txt = f"• 乘坐{line_name}"
+                            if start_name and end_name:
+                                txt += f"，从{start_name}到{end_name}"
+                            lines.append(txt)
+                        # 步行
+                        instr = seg.get("instruction") or seg.get("instruction_text")
+                        if instr:
+                            if not instr.strip().startswith("•"):
+                                lines.append(f"• {instr.strip()}")
+                            else:
+                                lines.append(instr.strip())
+
+                return "\n".join(lines)
+        except Exception:
+            return ""
+
+    def _format_route_planning_response(self, origin: str, destination: str, data: Dict[str, Any]) -> str:
+        """将路线数据格式化为面向用户的友好输出，风格参考'交通方式对比+详细出行方案'"""
+        try:
+            lines: List[str] = []
+            lines.append(f"南京南站 → 南京站 路线规划") if ("南京" in origin + destination) else lines.append(f"{origin} → {destination} 路线规划")
+            lines.append("")
+            lines.append("### 交通方式对比")
+
+            # 汇总各方式的距离/时间/费用
+            mode_to_metrics: Dict[str, Dict[str, Any]] = {}
+            for item in data.get("routes", []):
+                mode_name = item.get("transport_mode")
+                distance_km = item.get("distance_km")
+                duration_min = item.get("duration_min")
+                if mode_name and (distance_km is not None) and (duration_min is not None):
+                    cost_text = ""
+                    if mode_name == "驾车":
+                        cost_text = f"油费约{(distance_km*0.8):.1f}元，停车费约10元"
+                    elif mode_name == "公交":
+                        cost_text = "约2-4元"
+                    elif mode_name == "地铁":
+                        cost_text = "约3-6元"
+                    elif mode_name == "步行":
+                        cost_text = "免费"
+                    elif mode_name == "骑行":
+                        cost_text = "免费或共享单车费用"
+                    mode_to_metrics[mode_name] = {
+                        "distance_km": distance_km,
+                        "duration_min": duration_min,
+                        "cost": cost_text
+                    }
+
+            if mode_to_metrics:
+                # 以固定顺序展示
+                for mode_name in ["驾车", "公交", "地铁", "步行", "骑行"]:
+                    m = mode_to_metrics.get(mode_name)
+                    if not m:
+                        continue
+                    lines.append(f"- {mode_name}：约{m['distance_km']:.1f}公里｜约{m['duration_min']:.0f}分钟｜{m['cost']}")
+            else:
+                lines.append("无法获取对比信息（接口未返回距离/时长）")
+
+            # 详细出行方案
+            lines.append("")
+            lines.append("### 详细出行方案")
+            for item in data.get("routes", []):
+                mode_name = item.get("transport_mode", "方案")
+                desc = item.get("route_info") or ""
+                lines.append("")
+                lines.append(f"方案一：{mode_name}")
+                # 将多行描述直接拼接
+                for seg in str(desc).split("\n"):
+                    if seg.strip():
+                        # 用 • 作为列表项目
+                        if not seg.strip().startswith("•") and not seg.strip().startswith("【"):
+                            lines.append(f"• {seg.strip()}")
+                        else:
+                            lines.append(seg.strip())
+
+            # 组合交通方案
+            combo = data.get("combination_routes", [])
+            if combo:
+                lines.append("")
+                lines.append("### 推荐方案：公交+步行组合")
+                for c in combo:
+                    if c.get("name") == "公交+步行组合":
+                        lines.append(f"• 总时间：{c.get('duration','约')}")
+                        if c.get("steps"):
+                            for s in c["steps"]:
+                                lines.append(f"  - {s}")
+                        if c.get("cost"):
+                            lines.append(f"• 费用：{c['cost']}")
+                        break
+
+            # 出行提示
+            lines.append("")
+            lines.append("### 出行提示")
+            lines.append("- 高峰期建议：早高峰7:30-9:00、晚高峰17:30-19:00，建议避开或预留更充裕时间")
+            lines.append("- 天气影响：雨雪天气建议优先公共交通，步行与骑行时间会显著延长")
+            lines.append("- 费用参考：实际以当日票价/路况为准")
+
+            return "\n".join(lines)
+        except Exception:
+            return ""
     
     def _generate_combination_routes(self, origin: str, destination: str) -> List[Dict[str, Any]]:
         """生成组合交通方式的路线方案"""
@@ -717,6 +1052,33 @@ class BaiduMapTool(BaseMCPTool):
         except Exception as e:
             self.logger.error(f"生成组合路线时出错: {str(e)}")
             return []
+
+    def _extract_city_from_geocoding(self, geo: Dict[str, Any]) -> str:
+        """从地理编码结果中提取城市名（尽力而为）。"""
+        try:
+            if not isinstance(geo, dict):
+                return ""
+            raw = geo.get("raw_result")
+            if isinstance(raw, dict):
+                # 常见结构 result.addressComponent.city
+                result = raw.get("result") or raw
+                if isinstance(result, dict):
+                    comp = result.get("addressComponent") or result.get("address_component")
+                    if isinstance(comp, dict):
+                        city = comp.get("city") or comp.get("province")
+                        if isinstance(city, str) and city:
+                            return city.replace("市", "")
+            # 退一步，尝试 formatted_address 中的中文“市”
+            formatted = geo.get("formatted_address", "")
+            if isinstance(formatted, str) and formatted:
+                for flag in ["市", "县", "区"]:
+                    idx = formatted.find(flag)
+                    if idx != -1:
+                        # 取前面两个汉字作为城市名的一个近似
+                        return formatted[: idx].split()[-1]
+        except Exception:
+            pass
+        return ""
     
     async def _enhanced_travel_planning(self, location: str, duration: str, interests: str) -> str:
         """增强的旅游规划功能"""

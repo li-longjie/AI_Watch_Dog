@@ -325,6 +325,20 @@ async def intelligent_chat(request: ChatRequest):
         
         # 使用智能代理处理其他请求
         result = await intelligent_agent.process_user_request(query)
+        
+        # 如果智能代理返回的结果包含DuckDuckGo搜索结果，确保格式正确
+        if isinstance(result, dict) and result.get("status") == "success":
+            # 检查是否有answer字段，如果有就直接返回
+            if "answer" in result:
+                return result
+            # 如果没有answer字段但有其他内容，尝试格式化
+            elif "search_results" in result or "detailed_content" in result:
+                return {
+                    "status": "success",
+                    "answer": result.get("message", "搜索完成"),
+                    "query_type": "intelligent_search"
+                }
+        
         return result
         
     except Exception as e:
@@ -333,6 +347,12 @@ async def intelligent_chat(request: ChatRequest):
             "status": "error",
             "message": f"处理请求时发生错误: {str(e)}"
         }
+
+@app.post("/detect_intent/")
+async def detect_intent(request: ChatRequest):
+    """检测用户意图并调用相应服务 - 保持与前端的兼容性"""
+    # 直接调用现有的intelligent_chat函数
+    return await intelligent_chat(request)
 
 async def search_video_activities(query: str):
     """智能搜索视频活动（复用原有逻辑）"""
@@ -585,4 +605,4 @@ async def health_check():
     }
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8086)  # 使用新的端口号 
+    uvicorn.run(app, host="0.0.0.0", port=8085)  # 修改回8085端口以匹配前端配置 
