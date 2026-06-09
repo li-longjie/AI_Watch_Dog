@@ -46,6 +46,7 @@ code.log
 *.flv
 *.mkv
 *.jpg
+!docs/assets/awards/*.jpg
 # 忽略 video_warning 目录下的所有内容
 video_warning
 chroma_db

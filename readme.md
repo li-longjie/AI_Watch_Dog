@@ -8,6 +8,13 @@ GitHub 地址：[https://github.com/li-longjie/AI_Watch_Dog](https://github.com/
 
 竞赛成果：本作品参加中国高校计算机大赛网络技术挑战赛，获得东北赛区一等奖、全国三等奖。
 
+获奖证书（已对个人姓名、学校和证书编号等信息做隐私处理）：
+
+<p align="center">
+  <img src="docs/assets/awards/ccf-network-northeast-first-redacted.jpg" alt="中国高校计算机大赛网络技术挑战赛东北赛区一等奖证书" width="420">
+  <img src="docs/assets/awards/ccf-network-national-third-redacted.jpg" alt="中国高校计算机大赛网络技术挑战赛全国三等奖证书" width="420">
+</p>
+
 ## 项目背景
 
 传统的视频监控或桌面记录系统通常只能保存原始数据，用户后续想要回看某个行为、某段网页内容、某次应用使用记录时，往往需要手动翻找视频、截图或日志。AI Watch Dog 的目标是把这些分散的多源活动数据统一建模成一个可检索、可统计、可追溯的个人活动知识库，让用户可以直接用自然语言提问。
