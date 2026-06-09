@@ -92,10 +92,27 @@ __pycache__/
 /received_audio/
 /video_warning/
 /video_chroma_db/
+/audio_recordings/
+/voice_rag_output/
+/voice_rag_temp/
 
 # 依赖项和打包
+node_modules/
+frontend/node_modules/
 *.zip
 *.jar
+
+# 本地调试/演示输出
+@AutomationLog.txt
+api_verification_*.json
+test_audio*.wav
+test_audio*.mp3
+test_*preset*.py
+/test_*.py
+/debug_*.py
+/check_*.py
+/direct_*_test.py
+/quick_test.py
 
 # 配置文件 (重要)
 config.py

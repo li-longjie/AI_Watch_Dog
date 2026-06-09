@@ -40,7 +40,7 @@
           </button>
         </div>
       </div>
-      
+
       <div class="chat-history" ref="chatHistoryRef">
         <div v-for="msg in filteredMessages" :key="msg.id" class="chat-message-container" :class="{ 'user-message': msg.sender === 'user' }">
           <div class="avatar" :class="msg.sender">
@@ -57,7 +57,7 @@
             </div>
           </div>
         </div>
-        
+
         <!-- 思考动画 -->
         <div v-if="isThinking" class="chat-message-container">
           <div class="avatar ai">
@@ -80,12 +80,13 @@
       </div>
       <div class="input-hint"></div>
     </div>
-    
+
     <div class="chat-input-area">
       <input type="text" v-model="userInput" @keyup.enter="sendMessage" :placeholder="currentMode === 'rag' ? '输入您的问题...' : '问我关于您的桌面活动，如：过去30分钟我浏览了什么网页？'" class="chat-input">
-      <button @click="toggleVoiceRecognition" class="voice-button" :class="{ 'recording': isRecording }" title="语音输入">
+      <button @click="handleVoiceButtonClick" class="voice-button smart-voice-button" :class="{ 'recording': isRecording, 'speaking': isSpeaking }" :title="getVoiceButtonTitle()">
         <span v-if="isRecording">🎙️</span>
-        <span v-else>🎤</span>
+        <span v-else-if="isSpeaking">🔊</span>
+        <span v-else>🔈</span>
       </button>
       <button @click="sendMessage" class="send-button">发送</button>
     </div>
@@ -102,18 +103,32 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onMounted, computed, onUnmounted } from 'vue';
+import { ref, watch, nextTick, onMounted, onBeforeUnmount, computed, onUnmounted } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import { WakeWordManager } from '../utils/wakeword_manager.js';
 
 const userInput = ref('');
 const chatHistoryRef = ref(null);
-const messages = ref([]);
+// 为不同模式创建独立的消息存储
+const ragMessages = ref([]);      // AI问答模式的消息
+const activityMessages = ref([]); // 活动检索模式的消息
+
+// 当前激活的消息列表（根据模式动态切换）
+const messages = computed(() => {
+  return currentMode.value === 'rag' ? ragMessages.value : activityMessages.value;
+});
+
+// 获取当前模式的消息数组（用于添加/删除操作）
+const getCurrentMessages = () => {
+  return currentMode.value === 'rag' ? ragMessages : activityMessages;
+};
 const isConnected = ref(false);
 const isRecording = ref(false);
 const recognizedText = ref('');
 const isSpeaking = ref(false);
 const currentSpeakingId = ref(null);
+const currentAudio = ref(null);  // 当前播放的音频对象
 const isThinking = ref(false);
 const thinkingDots = ref("");
 const systemStats = ref(null);
@@ -126,29 +141,30 @@ const audioContext = ref(null);
 const mediaRecorder = ref(null);
 const audioChunks = ref([]);
 const audioStream = ref(null);
-const whisperWebSocket = ref(null);
-const whisperConnected = ref(false);
-const WHISPER_SERVER_URL = 'ws://localhost:8086/ws/';
-const WHISPER_API_URL = 'http://localhost:8086/transcribe_chunk/';
+const voiceRagConnected = ref(false);
+// 唤醒词
+const wakewordEnabled = ref(false);
+let wakewordManager = null;
 
-// 活动检索服务器地址
+// 服务器地址
+const VOICE_RAG_SERVICE_URL = 'http://localhost:8087';  // 新的语音RAG服务
 const RAG_SERVER_URL = 'http://localhost:8085';  // RAG智能问答服务器
-const ACTIVITY_SERVER_URL = 'http://localhost:5001';
+const ACTIVITY_SERVER_URL = 'http://localhost:5001';  // 活动检索服务器
 
 // 过滤掉系统连接消息
 const filteredMessages = computed(() => {
-  return messages.value.filter(msg => 
+  return messages.value.filter(msg =>
     !(msg.sender === 'system' && msg.text.includes('已连接到智能问答系统')));
 });
 
 // 计算是否应该显示快速问题建议
 const shouldShowQuickQuestions = computed(() => {
   if (currentMode.value !== 'activity') return false;
-  
+
   // 只有系统消息时显示快速问题
   const userMessages = messages.value.filter(msg => msg.sender === 'user');
   const aiMessages = messages.value.filter(msg => msg.sender === 'ai');
-  
+
   return userMessages.length === 0 && aiMessages.length === 0;
 });
 
@@ -162,74 +178,284 @@ const getAvatarIcon = (sender) => {
   }
 };
 
-// 初始化WebSocket连接到Whisper服务
-const initWhisperWebSocket = () => {
+// 检查语音RAG服务连接
+const checkVoiceRagConnection = async () => {
   try {
-    whisperWebSocket.value = new WebSocket(WHISPER_SERVER_URL);
-    
-    whisperWebSocket.value.onopen = () => {
-      console.log('已连接到Whisper WebSocket服务');
-      whisperConnected.value = true;
-    };
-    
-    whisperWebSocket.value.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.transcription) {
-          recognizedText.value = data.transcription;
-        } else if (data.error) {
-          console.error('Whisper错误:', data.error);
-        }
-      } catch (e) {
-        console.error('解析Whisper响应错误:', e);
-      }
-    };
-    
-    whisperWebSocket.value.onerror = (error) => {
-      console.error('Whisper WebSocket错误:', error);
-      whisperConnected.value = false;
-    };
-    
-    whisperWebSocket.value.onclose = () => {
-      console.log('Whisper WebSocket连接已关闭');
-      whisperConnected.value = false;
-    };
-  } catch (e) {
-    console.error('创建Whisper WebSocket连接错误:', e);
+    const response = await fetch(`${VOICE_RAG_SERVICE_URL}/api/health`);
+    if (response.ok) {
+      voiceRagConnected.value = true;
+      console.log('语音RAG服务连接正常');
+      return true;
+    } else {
+      voiceRagConnected.value = false;
+      return false;
+    }
+  } catch (error) {
+    console.error('语音RAG服务连接失败:', error);
+    voiceRagConnected.value = false;
+    return false;
   }
 };
 
-// 通过API发送音频数据到Whisper服务
-const sendAudioToWhisperAPI = async (audioBlob) => {
-  try {
-    // 将Blob转换为Base64
+// 将Blob转换为Base64的辅助函数
+const blobToBase64 = (blob) => {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.readAsDataURL(audioBlob);
-    
-    reader.onloadend = async () => {
-      const base64Audio = reader.result;
-      
-      const response = await fetch(WHISPER_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          audio_data: base64Audio
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`API返回错误: ${response.status}`);
+    reader.onloadend = () => resolve(reader.result.split(',')[1]); // 去掉data:audio/webm;base64,前缀
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+};
+
+// 发送音频到语音RAG服务 - 分阶段处理版本
+const sendAudioToVoiceRagService = async (audioBlob) => {
+  try {
+    const base64Audio = await blobToBase64(audioBlob);
+
+    console.log('🎤 开始分阶段语音处理...');
+
+    // 第一阶段：仅进行语音转录，立即显示用户输入
+    console.log('📝 第一阶段：语音转录...');
+    const transcribeResponse = await fetch(`${VOICE_RAG_SERVICE_URL}/api/voice/transcribe`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        audio_data: base64Audio,
+        format: 'webm'
+      })
+    });
+
+    if (!transcribeResponse.ok) {
+      throw new Error(`语音转录服务返回错误: ${transcribeResponse.status}`);
+    }
+
+    const transcribeData = await transcribeResponse.json();
+    console.log('📝 转录结果:', transcribeData);
+
+    if (transcribeData.success && transcribeData.transcription) {
+      // 立即显示用户输入
+      recognizedText.value = transcribeData.transcription;
+
+      const userMessage = {
+        id: Date.now(),
+        sender: 'user',
+        text: transcribeData.transcription
+      };
+      getCurrentMessages().value.push(userMessage);
+      console.log('✅ 第一阶段完成：用户输入已显示');
+
+      // 第二阶段：显示AI思考状态，然后生成回答
+      console.log('🤖 第二阶段：生成AI回答...');
+
+      // 开始思考动画（使用原有的思考动画）
+      startThinkingAnimation();
+
+      // 预分配AI消息ID，但不立即添加消息
+      const aiMessageId = Date.now() + 1;
+
+      try {
+        // 调用后端生成AI回答
+        const queryResponse = await fetch(`${VOICE_RAG_SERVICE_URL}/api/query/process`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            text: transcribeData.transcription,
+            mode: currentMode.value
+          })
+        });
+
+        // 停止思考动画
+        stopThinkingAnimation();
+
+        if (!queryResponse.ok) {
+          throw new Error(`AI查询服务返回错误: ${queryResponse.status}`);
+        }
+
+        const queryData = await queryResponse.json();
+        console.log('🤖 AI回答结果:', queryData);
+
+        if (queryData.success) {
+          // 直接添加AI回答消息
+          const aiMessage = {
+            id: aiMessageId,
+            sender: 'ai',
+            text: queryData.response_text
+          };
+          getCurrentMessages().value.push(aiMessage);
+
+          console.log('✅ 第二阶段完成：AI回答已显示');
+
+          // 播放AI语音回复
+          if (queryData.audio_url) {
+            playAudioResponse(queryData.audio_url);
+          } else {
+            // 使用灵动语音自动朗读文本
+            console.log('🔊 使用灵动语音自动朗读AI回答');
+            setTimeout(() => {
+              speakMessage(queryData.response_text, aiMessageId);
+            }, 100);
+          }
+
+          return {
+            success: true,
+            transcription: transcribeData.transcription,
+            response_text: queryData.response_text,
+            audio_url: queryData.audio_url,
+            transcribe_time: transcribeData.transcribe_time,
+            processing_time: queryData.processing_time
+          };
+        } else {
+          throw new Error(queryData.error || 'AI查询失败');
+        }
+      } catch (queryError) {
+        // 停止思考动画
+        stopThinkingAnimation();
+
+        // 添加错误消息
+        const errorMessage = {
+          id: aiMessageId,
+          sender: 'ai',
+          text: `抱歉，处理您的问题时出现错误：${queryError.message}`
+        };
+        getCurrentMessages().value.push(errorMessage);
+        throw queryError;
       }
-      
-      const data = await response.json();
-      if (data.transcription) {
-        recognizedText.value = data.transcription;
-      }
-    };
+    } else {
+      throw new Error(transcribeData.error || '语音转录失败');
+    }
   } catch (e) {
-    console.error('发送音频到Whisper API错误:', e);
+    console.error('分阶段语音处理错误:', e);
+    throw e;
+  }
+};
+
+// 播放AI音频回复 - 启用灵动语音自动播放
+const playAudioResponse = (audioUrl) => {
+  try {
+    if (!audioUrl) {
+      console.log('没有音频URL，跳过播放');
+      return;
+    }
+
+    // 构建正确的音频URL
+    let fullAudioUrl;
+    if (audioUrl.startsWith('http')) {
+      fullAudioUrl = audioUrl;
+    } else {
+      fullAudioUrl = `${VOICE_RAG_SERVICE_URL}/${audioUrl}`;
+    }
+
+    console.log('🔊 准备播放AI语音回复:', fullAudioUrl);
+
+    const audio = new Audio(fullAudioUrl);
+
+    // 添加事件监听器
+    audio.onloadstart = () => console.log('🎵 开始加载音频...');
+    audio.oncanplay = () => console.log('🎵 音频可以播放');
+    audio.onplay = () => {
+      console.log('🎵 开始播放音频');
+      isSpeaking.value = true;  // 更新全局语音状态
+      currentAudio.value = audio;  // 设置当前音频对象
+    };
+    audio.onended = () => {
+      console.log('🎵 音频播放完成');
+      isSpeaking.value = false;  // 重置全局语音状态
+      currentAudio.value = null;
+    };
+    audio.onerror = (e) => {
+      console.error('❌ 音频播放错误:', e);
+      isSpeaking.value = false;  // 重置全局语音状态
+      currentAudio.value = null;
+    };
+
+    // 播放音频
+    audio.play().then(() => {
+      console.log('✅ 音频播放启动成功');
+    }).catch(e => {
+      console.error('❌ 播放音频回复失败:', e);
+      // 尝试备用播放方式
+      setTimeout(() => {
+        try {
+          audio.play();
+        } catch (retryError) {
+          console.error('❌ 重试播放也失败:', retryError);
+        }
+      }, 100);
+    });
+
+  } catch (e) {
+    console.error('❌ 创建音频对象失败:', e);
+  }
+};
+
+// 获取语音按钮的提示文本
+const getVoiceButtonTitle = () => {
+  if (isRecording.value) {
+    return '正在录音中... (点击停止)';
+  } else if (isSpeaking.value) {
+    return '点击停止语音播放';
+  } else if (voiceRagConnected.value) {
+    return '智能语音对话 (一键识别+回答)';
+  } else {
+    return '语音输入 (服务未连接)';
+  }
+};
+
+// 处理语音按钮点击 - 集成语音录制和语音打断功能
+const handleVoiceButtonClick = () => {
+  console.log('🎙️ 语音按钮被点击');
+  console.log('🔊 当前语音状态:', isSpeaking.value);
+  console.log('🎤 当前录音状态:', isRecording.value);
+
+  if (isSpeaking.value) {
+    // 如果正在播放语音，则停止播放
+    console.log('⏹️ 停止语音播放');
+    toggleGlobalVoiceControl();
+  } else if (isRecording.value) {
+    // 如果正在录音，则停止录音
+    console.log('⏹️ 停止录音');
+    stopVoiceRecognition();
+  } else {
+    // 否则开始语音识别
+    console.log('🎙️ 开始语音识别');
+    toggleVoiceRecognition();
+  }
+};
+
+// 全局语音控制函数
+const toggleGlobalVoiceControl = () => {
+  console.log('🎛️ 全局语音控制被触发');
+  console.log('🔊 当前语音状态:', isSpeaking.value);
+
+  if (isSpeaking.value) {
+    // 停止所有语音播放
+    console.log('⏹️ 停止所有语音播放');
+
+    // 停止当前的灵动语音朗读
+    if (currentAudio.value) {
+      console.log('⏹️ 停止灵动语音播放');
+      currentAudio.value.pause();
+      currentAudio.value.currentTime = 0;
+      currentAudio.value = null;
+    }
+
+    // 停止系统语音合成
+    if (speechSynthesis.speaking) {
+      console.log('⏹️ 停止系统语音合成');
+      speechSynthesis.cancel();
+    }
+
+    // 重置状态
+    isSpeaking.value = false;
+    currentSpeakingId.value = null;
+
+    console.log('✅ 所有语音已停止');
+  } else {
+    console.log('ℹ️ 当前没有语音在播放');
   }
 };
 
@@ -238,85 +464,86 @@ const startAudioRecording = async () => {
   try {
     // 请求麦克风权限
     audioStream.value = await navigator.mediaDevices.getUserMedia({ audio: true });
-    
+
     // 创建AudioContext
     audioContext.value = new (window.AudioContext || window.webkitAudioContext)();
-    
+
     // 创建MediaRecorder
     mediaRecorder.value = new MediaRecorder(audioStream.value);
     audioChunks.value = [];
-    
+
     // 收集音频数据
     mediaRecorder.value.ondataavailable = (event) => {
       if (event.data.size > 0) {
         audioChunks.value.push(event.data);
       }
     };
-    
+
     // 处理录制停止事件
     mediaRecorder.value.onstop = async () => {
       // 合并音频块
-      const audioBlob = new Blob(audioChunks.value, { type: 'audio/wav' });
-      
-      // 发送到Whisper服务
-      if (whisperConnected.value && whisperWebSocket.value) {
-        // 将Blob转换为Base64
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        
-        reader.onloadend = () => {
-          const base64Audio = reader.result;
-          whisperWebSocket.value.send(base64Audio);
-        };
-      } else {
-        // 使用API替代WebSocket
-        await sendAudioToWhisperAPI(audioBlob);
+      const audioBlob = new Blob(audioChunks.value, { type: 'audio/webm' });
+
+      try {
+        // 发送到语音RAG服务进行一体化处理
+        await sendAudioToVoiceRagService(audioBlob);
+      } catch (error) {
+        console.error('语音处理失败:', error);
+
+        // 显示错误消息
+        getCurrentMessages().value.push({
+          id: Date.now(),
+          sender: 'system',
+          text: `🎤 语音处理失败: ${error.message}`
+        });
       }
-      
+
       // 清理AudioStream资源
       if (audioStream.value) {
         audioStream.value.getTracks().forEach(track => track.stop());
       }
     };
-    
-    // 每5秒发送一次音频数据（实时转录）
-    const sendInterval = 5000; // 5秒
-    let timerId;
-    
-    const sendAudioChunk = () => {
-      if (audioChunks.value.length > 0 && isRecording.value) {
-        const audioBlob = new Blob(audioChunks.value, { type: 'audio/wav' });
-        sendAudioToWhisperAPI(audioBlob);
-        // 保留最新的一部分数据，确保连贯性
-        audioChunks.value = audioChunks.value.slice(-5);
-      }
-    };
-    
-    timerId = setInterval(sendAudioChunk, sendInterval);
-    
+
     // 开始录制
     mediaRecorder.value.start(100); // 每100ms收集数据
     isRecording.value = true;
     recognizedText.value = '';
-    
-    // 清理定时器
-    mediaRecorder.value.onresume = () => {
-      if (!timerId) {
-        timerId = setInterval(sendAudioChunk, sendInterval);
-      }
-    };
-    
-    mediaRecorder.value.onpause = () => {
-      if (timerId) {
-        clearInterval(timerId);
-        timerId = null;
-      }
-    };
-    
+
+    // 显示录音状态
+    console.log('🎤 开始录音...');
+  // 启动静音检测
+  try {
+    if (audioContext.value && audioStream.value) {
+      const silenceEnergyThreshold = 0.02;
+      let lastVoiceTimestamp = Date.now();
+      const source = audioContext.value.createMediaStreamSource(audioStream.value);
+      const processor = audioContext.value.createScriptProcessor(2048, 1, 1);
+      processor.onaudioprocess = (e) => {
+        const input = e.inputBuffer.getChannelData(0);
+        let sum = 0; for (let i = 0; i < input.length; i += 1) sum += input[i] * input[i];
+        const rms = Math.sqrt(sum / input.length);
+        if (rms > silenceEnergyThreshold) lastVoiceTimestamp = Date.now();
+      };
+      source.connect(processor);
+      processor.connect(audioContext.value.destination);
+      // 保存到全局以便停止时清理
+      window.__qaSilenceCtx = { source, processor, get lastVoice(){return lastVoiceTimestamp;}, set lastVoice(v){lastVoiceTimestamp=v;} };
+      if (window.__qaSilenceTimer) clearInterval(window.__qaSilenceTimer);
+      window.__qaSilenceTimer = setInterval(() => {
+        if (isRecording.value && Date.now() - window.__qaSilenceCtx.lastVoice > 5000) {
+          console.log('⏱️ 静音超时，自动停止录音');
+          stopVoiceRecognition();
+        }
+      }, 1000);
+    }
+  } catch (e) {
+    console.warn('静音检测启动失败:', e);
+  }
+
   } catch (error) {
     console.error('启动音频录制错误:', error);
     isRecording.value = false;
-    
+
     if (error.name === 'NotAllowedError') {
       alert('请允许访问麦克风以使用语音功能');
     } else {
@@ -336,6 +563,10 @@ const toggleVoiceRecognition = () => {
 
 // 开始语音识别
 const startVoiceRecognition = () => {
+  // 暂停唤醒监听，避免录音期间误触
+  if (wakewordManager && wakewordManager.enabled) {
+    wakewordManager.pause();
+  }
   startAudioRecording();
 };
 
@@ -344,10 +575,23 @@ const stopVoiceRecognition = () => {
   if (mediaRecorder.value && isRecording.value) {
     mediaRecorder.value.stop();
     isRecording.value = false;
-    
-    if (recognizedText.value) {
-      userInput.value = recognizedText.value;
+    console.log('⏹️ 录音已停止');
+    // 录音结束后恢复唤醒监听
+    if (wakewordManager && wakewordEnabled.value) {
+      wakewordManager.resume();
     }
+    // 停止静音检测
+    try {
+      if (window.__qaSilenceTimer) { clearInterval(window.__qaSilenceTimer); window.__qaSilenceTimer = null; }
+      if (window.__qaSilenceCtx) {
+        window.__qaSilenceCtx.processor.disconnect();
+        window.__qaSilenceCtx.processor.onaudioprocess = null;
+        window.__qaSilenceCtx.source.disconnect();
+        window.__qaSilenceCtx = null;
+      }
+    } catch (_) {}
+
+    // 注意：不再自动填充到输入框，因为语音RAG服务会直接处理并回复
   }
 };
 
@@ -355,39 +599,166 @@ const stopVoiceRecognition = () => {
 let speechSynthesis = window.speechSynthesis;
 let speechUtterance = null;
 
-// 朗读消息
-const speakMessage = (text, msgId) => {
+// 文本清理函数 - 将HTML内容转换为纯文本
+const cleanTextForSpeech = (text) => {
+  let cleanText = text;
+
+  // 如果文本包含HTML标签，使用DOM解析获取纯文本
+  if (text.includes('<')) {
+    try {
+      // 创建临时DOM元素来解析HTML
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = text;
+      cleanText = tempDiv.textContent || tempDiv.innerText || '';
+    } catch (e) {
+      // 如果DOM解析失败，使用正则表达式清理
+      cleanText = text.replace(/<[^>]*>/g, '');
+    }
+  }
+
+  // 进一步清理文本
+  cleanText = cleanText
+    .replace(/^\s*speak[,\s]*/, '')  // 移除开头的"speak,,,"
+    .replace(/^\s*[,\s]+/, '')  // 移除开头的逗号和空格
+    .replace(/^[,，\s]+/, '')  // 移除开头的中英文逗号和空格
+    .replace(/\*\*/g, '')  // 移除markdown加粗标记
+    .replace(/\*/g, '')  // 移除markdown斜体标记
+    .replace(/#{1,6}\s+/g, '')  // 移除markdown标题标记
+    .replace(/\n\n+/g, ' ')  // 将多个换行替换为空格
+    .replace(/\s+/g, ' ')  // 合并多个空格为单个空格
+    .trim();
+
+  return cleanText;
+};
+
+// 朗读消息 - 使用灵动语音 XiaoxiaoNeural
+const speakMessage = async (text, msgId) => {
+  console.log('🎙️ speakMessage 被调用');
+  console.log('📝 传入文本:', text);
+  console.log('🆔 消息ID:', msgId);
+  console.log('🔊 当前朗读状态:', isSpeaking.value);
+
   if (isSpeaking.value) {
     // 如果正在朗读，则停止
-    speechSynthesis.cancel();
+    console.log('⏹️ 停止当前朗读');
+    if (currentAudio.value) {
+      currentAudio.value.pause();
+      currentAudio.value.currentTime = 0;
+    }
     isSpeaking.value = false;
     currentSpeakingId.value = null;
     return;
   }
 
-  // 创建语音合成实例
-  speechUtterance = new SpeechSynthesisUtterance(text);
-  speechUtterance.lang = 'zh-CN'; // 设置中文
-  
-  // 监听语音开始和结束事件
-  speechUtterance.onstart = () => {
+  try {
+    // 使用专门的清理函数
+    const cleanText = cleanTextForSpeech(text);
+
+    if (!cleanText) {
+      console.log('❌ 清理后的文本为空，跳过朗读');
+      isSpeaking.value = false;
+      currentSpeakingId.value = null;
+      return;
+    }
+
+    // 设置朗读状态
     isSpeaking.value = true;
     currentSpeakingId.value = msgId;
-  };
-  
-  speechUtterance.onend = () => {
+
+    console.log('='.repeat(80));
+    console.log('🔍 朗读调试信息:');
+    console.log('📝 原始文本类型:', typeof text);
+    console.log('📝 原始文本长度:', text.length);
+    console.log('📝 原始文本内容:');
+    console.log(text);
+    console.log('-'.repeat(40));
+    console.log('🧹 清理后文本类型:', typeof cleanText);
+    console.log('🧹 清理后文本长度:', cleanText.length);
+    console.log('🧹 清理后文本内容:');
+    console.log(cleanText);
+    console.log('-'.repeat(40));
+    console.log('🔊 即将发送给TTS的文本:');
+    console.log(JSON.stringify(cleanText));
+    console.log('='.repeat(80));
+
+    // 调用语音RAG服务生成语音
+    const response = await fetch(`${VOICE_RAG_SERVICE_URL}/api/tts/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        text: cleanText,  // 使用清理后的文本
+        voice: 'zh-CN-XiaoxiaoNeural'  // 使用灵动的晓晓语音
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`语音生成失败: ${response.status}`);
+    }
+
+    const result = await response.json();
+
+    if (result.success && result.audio_url) {
+      // 播放生成的语音
+      let audioUrl = result.audio_url;
+      if (!audioUrl.startsWith('http')) {
+        audioUrl = `${VOICE_RAG_SERVICE_URL}${audioUrl}`;
+      }
+
+      console.log('🎵 播放灵动语音:', audioUrl);
+
+      const audio = new Audio(audioUrl);
+      currentAudio.value = audio;
+
+      // 监听语音播放事件
+      audio.onplay = () => {
+        console.log('✅ 开始播放灵动语音朗读');
+      };
+
+      audio.onended = () => {
+        console.log('✅ 灵动语音朗读完成');
+        isSpeaking.value = false;
+        currentSpeakingId.value = null;
+        currentAudio.value = null;
+      };
+
+      audio.onerror = (e) => {
+        console.error('❌ 灵动语音播放失败:', e);
+        isSpeaking.value = false;
+        currentSpeakingId.value = null;
+        currentAudio.value = null;
+      };
+
+      // 开始播放
+      await audio.play();
+
+    } else {
+      throw new Error(result.error || '语音生成失败');
+    }
+
+  } catch (error) {
+    console.error('❌ 朗读消息失败:', error);
     isSpeaking.value = false;
     currentSpeakingId.value = null;
-  };
-  
-  speechUtterance.onerror = (event) => {
-    console.error('语音合成错误:', event);
-    isSpeaking.value = false;
-    currentSpeakingId.value = null;
-  };
-  
-  // 开始朗读
-  speechSynthesis.speak(speechUtterance);
+    currentAudio.value = null;
+
+    // 如果灵动语音失败，回退到系统语音
+    console.log('🔄 回退到系统语音...');
+    try {
+      speechUtterance = new SpeechSynthesisUtterance(cleanText);  // 使用清理后的文本
+      speechUtterance.lang = 'zh-CN';
+      speechUtterance.onend = () => {
+        isSpeaking.value = false;
+        currentSpeakingId.value = null;
+      };
+      speechSynthesis.speak(speechUtterance);
+    } catch (fallbackError) {
+      console.error('❌ 系统语音也失败:', fallbackError);
+      isSpeaking.value = false;
+      currentSpeakingId.value = null;
+    }
+  }
 };
 
 // 发送消息
@@ -397,24 +768,24 @@ const sendMessage = async () => {
     if (isRecording.value) {
       stopVoiceRecognition();
     }
-    
+
     // 添加用户消息到列表
     const userMessage = {
       id: Date.now(),
       sender: 'user',
       text: userInput.value.trim()
     };
-    messages.value.push(userMessage);
-    
+    getCurrentMessages().value.push(userMessage);
+
     const query = userInput.value.trim();
     userInput.value = ''; // 清空输入框
-    
+
     // 开始显示思考动画
     startThinkingAnimation();
-    
+
     try {
       let response, data;
-      
+
       if (currentMode.value === 'activity') {
         // 使用活动查询API
         response = await fetch(`${ACTIVITY_SERVER_URL}/api/query`, {
@@ -434,20 +805,21 @@ const sendMessage = async () => {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            query: query
+            query: query,
+            mode: currentMode.value
           })
         });
       }
-      
+
       // 停止思考动画
       stopThinkingAnimation();
-      
+
       if (!response.ok) {
         throw new Error(`服务器返回错误: ${response.status}`);
       }
-      
+
       data = await response.json();
-      
+
       // 根据模式处理不同的响应格式
       let responseText = '';
       if (currentMode.value === 'activity') {
@@ -463,25 +835,33 @@ const sendMessage = async () => {
           throw new Error('RAG服务器返回错误数据');
         }
       }
-      
+
       // 添加AI回复
       const aiMsgId = Date.now() + 2;
-      messages.value.push({
+      getCurrentMessages().value.push({
         id: aiMsgId,
         sender: 'ai',
         text: responseText
       });
-      
+
       // 自动朗读AI回复
-      speakMessage(responseText, aiMsgId);
+      console.log('🤖 准备自动朗读AI回复');
+      console.log('📝 回复文本:', responseText);
+      console.log('🆔 消息ID:', aiMsgId);
+
+      // 延迟一下确保DOM更新完成
+      setTimeout(() => {
+        console.log('🔊 开始自动朗读AI回复');
+        speakMessage(responseText, aiMsgId);
+      }, 100);
     } catch (error) {
       // 停止思考动画
       stopThinkingAnimation();
-      
+
       console.error('发送消息错误:', error);
-      
+
       let errorMessage = '抱歉，无法处理您的请求。';
-      
+
       if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
         errorMessage = '🔌 无法连接到桌面活动服务器，请确保：\n• activity_ui.py 正在运行\n• 服务器地址为 http://localhost:5001\n• 网络连接正常';
       } else if (error.message.includes('500')) {
@@ -491,8 +871,8 @@ const sendMessage = async () => {
       } else {
         errorMessage = `❌ 发生未知错误：${error.message}`;
       }
-      
-      messages.value.push({
+
+      getCurrentMessages().value.push({
         id: Date.now() + 3,
         sender: 'system',
         text: errorMessage
@@ -513,7 +893,7 @@ const checkRAGConnection = async () => {
         query: "测试连接"
       })
     });
-    
+
     if (response.ok) {
       ragConnected.value = true;
       return true;
@@ -539,7 +919,7 @@ const checkActivityConnection = async () => {
         message: "测试连接"
       })
     });
-    
+
     if (response.ok) {
       activityConnected.value = true;
       // 获取系统统计信息
@@ -559,41 +939,38 @@ const checkActivityConnection = async () => {
 const checkConnection = async () => {
   const ragStatus = await checkRAGConnection();
   const activityStatus = await checkActivityConnection();
-  
+  const voiceRagStatus = await checkVoiceRagConnection();
+
   // 根据当前模式设置连接状态
   if (currentMode.value === 'rag') {
     isConnected.value = ragStatus;
   } else {
     isConnected.value = activityStatus;
   }
-  
-  // 构建欢迎消息
-  let welcomeMessage = '🔌 系统连接状态：\n\n';
-  
-  if (ragStatus) {
-    welcomeMessage += '✅ AI智能问答系统：已连接\n';
+
+  // 构建简洁的系统状态显示
+  const statusIcons = [
+    ragStatus ? '✅ AI智能问答' : '❌ AI智能问答',
+    activityStatus ? '✅ 桌面活动检索' : '❌ 桌面活动检索',
+    voiceRagStatus ? '✅ 智能语音' : '❌ 智能语音'
+  ];
+
+  let welcomeMessage = `🔌 系统连接状态：${statusIcons.join('  •  ')}\n`;
+
+  if (activityStatus && systemStats.value?.hasData) {
+    welcomeMessage += `📊 最新记录时间：${new Date(systemStats.value.latestActivity).toLocaleString('zh-CN')}`;
   } else {
-    welcomeMessage += '❌ AI智能问答系统：连接失败\n';
+    welcomeMessage += '💡 使用上方按钮切换检索模式  •  🎤 点击语音按钮进行智能对话';
   }
-  
-  if (activityStatus) {
-    welcomeMessage += '✅ 桌面活动检索系统：已连接\n';
-    
-    if (systemStats.value && systemStats.value.hasData) {
-      const lastActivityTime = new Date(systemStats.value.latestActivity).toLocaleString('zh-CN');
-      welcomeMessage += `   • 最新记录时间：${lastActivityTime}\n`;
-    }
-  } else {
-    welcomeMessage += '❌ 桌面活动检索系统：连接失败\n';
-  }
-  
-  welcomeMessage += '\n💡 使用上方按钮切换不同的检索模式！';
-  
-  messages.value.push({
+
+  // 在两个模式下都添加欢迎消息
+  const welcomeMsg = {
     id: Date.now(),
     sender: 'system',
     text: welcomeMessage
-  });
+  };
+  ragMessages.value.push({...welcomeMsg});
+  activityMessages.value.push({...welcomeMsg, id: Date.now() + 1});
 };
 
 // 获取发送者名称
@@ -609,7 +986,6 @@ const getSenderName = (sender) => {
 // 组件挂载时检查连接
 onMounted(() => {
   checkConnection();
-  initWhisperWebSocket();
 });
 
 // 组件卸载时清理资源
@@ -617,15 +993,11 @@ onUnmounted(() => {
   if (mediaRecorder.value && isRecording.value) {
     mediaRecorder.value.stop();
   }
-  
+
   if (audioStream.value) {
     audioStream.value.getTracks().forEach(track => track.stop());
   }
-  
-  if (whisperWebSocket.value) {
-    whisperWebSocket.value.close();
-  }
-  
+
   if (isSpeaking.value) {
     speechSynthesis.cancel();
   }
@@ -654,16 +1026,16 @@ const renderMarkdown = (text) => {
 function startThinkingAnimation() {
   isThinking.value = true;
   let dotsCount = 0;
-  
+
   const animateDots = () => {
     if (!isThinking.value) return;
-    
+
     dotsCount = (dotsCount % 3) + 1; // 1, 2, 3 循环
     thinkingDots.value = ".".repeat(dotsCount);
-    
+
     setTimeout(animateDots, 500); // 每500毫秒更新一次
   };
-  
+
   animateDots();
 }
 
@@ -712,38 +1084,80 @@ const getSystemStats = async () => {
 // 添加模式选择功能
 const switchMode = (mode) => {
   currentMode.value = mode;
-  
+
   // 更新连接状态指示器
   if (mode === 'rag') {
     isConnected.value = ragConnected.value;
   } else {
     isConnected.value = activityConnected.value;
   }
-  
+
   // 添加模式切换提示
   const modeNames = {
     rag: 'AI智能问答',
     activity: '桌面活动检索'
   };
-  
-  messages.value.push({
+
+  getCurrentMessages().value.push({
     id: Date.now(),
     sender: 'system',
     text: `🔄 已切换到 ${modeNames[mode]} 模式`
   });
 };
 
-// 清除聊天记录
+// 清除聊天记录 - 只清除当前模式的消息
 const clearChat = () => {
   // 只保留系统连接消息
-  messages.value = messages.value.filter(msg => 
+  const currentMessages = getCurrentMessages();
+  currentMessages.value = currentMessages.value.filter(msg =>
     msg.sender === 'system' && (
-      msg.text.includes('系统连接状态') || 
+      msg.text.includes('系统连接状态') ||
       msg.text.includes('已连接到桌面活动检索系统') ||
       msg.text.includes('已连接到智能问答系统')
     )
   );
 };
+onMounted(async () => {
+  // 初始化唤醒词管理器（默认关闭，可后续在设置里提供开关）
+  wakewordManager = new WakeWordManager({
+    wakePhrase: '你好助手',
+    engine: 'webspeech',
+    lang: 'zh-CN',
+    cooldownMs: 5000,
+    onWake: () => {
+      console.log('🟢 语音唤醒触发');
+      if (!isRecording.value) {
+        // 轻提示音（常驻AudioContext + 包络，提升播放成功率并避免过响）
+        try {
+          if (!window.__uiAudioCtx) window.__uiAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const ctx = window.__uiAudioCtx;
+          if (ctx.state === 'suspended') { ctx.resume?.(); }
+          const o = ctx.createOscillator();
+          const g = ctx.createGain();
+          o.type = 'sine';
+          o.frequency.setValueAtTime(880, ctx.currentTime);
+          g.gain.setValueAtTime(0.0001, ctx.currentTime);
+          g.gain.exponentialRampToValueAtTime(0.05, ctx.currentTime + 0.02);
+          g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.15);
+          o.connect(g).connect(ctx.destination);
+          o.start();
+          o.stop(ctx.currentTime + 0.18);
+        } catch (_) {}
+        toggleVoiceRecognition();
+      }
+    }
+  });
+  // 默认启用唤醒词
+  wakewordEnabled.value = true; await wakewordManager.start();
+});
+
+onBeforeUnmount(async () => {
+  if (wakewordManager) {
+    await wakewordManager.stop();
+    wakewordManager = null;
+  }
+});
+
 </script>
 
 <style scoped>
@@ -860,6 +1274,8 @@ const clearChat = () => {
   margin-right: auto;
 }
 
+
+
 .bubble-system {
   background-color: rgba(255, 204, 0, 0.1);
   border: 1px solid rgba(255, 204, 0, 0.3);
@@ -918,7 +1334,7 @@ const clearChat = () => {
   transform: translateY(1px);
 }
 
-/* 语音按钮样式 */
+/* 智能语音按钮样式 */
 .voice-button {
   padding: 8px 12px;
   background: rgba(128, 90, 213, 0.2);
@@ -933,9 +1349,38 @@ const clearChat = () => {
   font-size: 16px;
 }
 
+.smart-voice-button {
+  background: linear-gradient(135deg, rgba(79, 209, 197, 0.2), rgba(128, 90, 213, 0.2));
+  color: var(--primary, #4fd1c5);
+  border: 1px solid rgba(79, 209, 197, 0.4);
+  position: relative;
+  overflow: hidden;
+}
+
+.smart-voice-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(79, 209, 197, 0.3), transparent);
+  transition: left 0.5s ease;
+}
+
+.smart-voice-button:hover::before {
+  left: 100%;
+}
+
 .voice-button:hover {
   background: rgba(128, 90, 213, 0.3);
   border-color: rgba(128, 90, 213, 0.6);
+}
+
+.smart-voice-button:hover {
+  background: linear-gradient(135deg, rgba(79, 209, 197, 0.3), rgba(128, 90, 213, 0.3));
+  border-color: rgba(79, 209, 197, 0.6);
+  box-shadow: 0 0 12px rgba(79, 209, 197, 0.4);
 }
 
 .voice-button.recording {
@@ -945,9 +1390,21 @@ const clearChat = () => {
   animation: recordingPulse 1.5s infinite;
 }
 
+.voice-button.speaking {
+  background: rgba(40, 167, 69, 0.3);
+  border-color: rgba(40, 167, 69, 0.6);
+  color: #28a745;
+  animation: speakingPulse 2s infinite;
+}
+
 @keyframes recordingPulse {
   0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(255, 77, 77, 0.4); }
   50% { transform: scale(1.05); box-shadow: 0 0 10px rgba(255, 77, 77, 0.7); }
+}
+
+@keyframes speakingPulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(40, 167, 69, 0.4); }
+  50% { transform: scale(1.03); box-shadow: 0 0 8px rgba(40, 167, 69, 0.7); }
 }
 
 /* 录音指示器样式 */
@@ -1071,10 +1528,10 @@ const clearChat = () => {
   transform: translateX(-50%);
   width: 80%;
   height: 2px;
-  background: linear-gradient(90deg, 
-    transparent, 
-    var(--cyber-neon), 
-    var(--cyber-purple), 
+  background: linear-gradient(90deg,
+    transparent,
+    var(--cyber-neon),
+    var(--cyber-purple),
     transparent);
   filter: blur(2px);
   opacity: 0.6;
@@ -1475,8 +1932,8 @@ const clearChat = () => {
 
 .quick-question-btn {
   padding: 6px 10px;
-  background: linear-gradient(135deg, 
-    rgba(128, 90, 213, 0.1), 
+  background: linear-gradient(135deg,
+    rgba(128, 90, 213, 0.1),
     rgba(79, 209, 197, 0.1));
   color: rgba(230, 241, 255, 0.9);
   border: 1px solid rgba(128, 90, 213, 0.3);
@@ -1490,8 +1947,8 @@ const clearChat = () => {
 }
 
 .quick-question-btn:hover {
-  background: linear-gradient(135deg, 
-    rgba(128, 90, 213, 0.2), 
+  background: linear-gradient(135deg,
+    rgba(128, 90, 213, 0.2),
     rgba(79, 209, 197, 0.2));
   border-color: rgba(79, 209, 197, 0.5);
   transform: translateY(-1px);
@@ -1510,9 +1967,9 @@ const clearChat = () => {
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, 
-    transparent, 
-    rgba(79, 209, 197, 0.1), 
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(79, 209, 197, 0.1),
     transparent);
   transition: left 0.5s ease;
 }
@@ -1573,4 +2030,6 @@ const clearChat = () => {
   flex-wrap: wrap;
   gap: 10px;
 }
-</style> 
+
+
+</style>

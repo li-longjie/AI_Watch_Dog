@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎤 语音RAG服务测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .status-panel {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-left: 10px;
+        }
+
+        .status-connected { background-color: #4ade80; }
+        .status-disconnected { background-color: #f87171; }
+        .status-unknown { background-color: #fbbf24; }
+
+        .voice-controls {
+            text-align: center;
+            margin: 30px 0;
+        }
+
+        .voice-button {
+            background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 100px;
+            height: 100px;
+            font-size: 48px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 20px rgba(74, 222, 128, 0.4);
+            margin: 0 10px;
+        }
+
+        .voice-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 25px rgba(74, 222, 128, 0.6);
+        }
+
+        .voice-button.recording {
+            background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+            animation: pulse 1.5s infinite;
+        }
+
+        .voice-button.processing {
+            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+            animation: spin 2s linear infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .chat-area {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 12px;
+            border-radius: 10px;
+            max-width: 80%;
+        }
+
+        .message.user {
+            background: rgba(74, 222, 128, 0.3);
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .message.ai {
+            background: rgba(139, 92, 246, 0.3);
+            margin-right: auto;
+        }
+
+        .message.system {
+            background: rgba(251, 191, 36, 0.3);
+            margin: 0 auto;
+            text-align: center;
+            font-style: italic;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .recording-indicator {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .recording-indicator.show {
+            display: block;
+        }
+
+        .waves {
+            display: flex;
+            justify-content: center;
+            gap: 4px;
+            margin-bottom: 10px;
+        }
+
+        .wave {
+            width: 4px;
+            height: 20px;
+            background: #4ade80;
+            border-radius: 2px;
+            animation: wave 1.2s infinite ease-in-out;
+        }
+
+        .wave:nth-child(2) { animation-delay: 0.2s; }
+        .wave:nth-child(3) { animation-delay: 0.4s; }
+        .wave:nth-child(4) { animation-delay: 0.6s; }
+
+        @keyframes wave {
+            0%, 100% { height: 8px; }
+            50% { height: 20px; }
+        }
+
+        .log-area {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+                    <h1>🎤 语音RAG服务测试 - 简化版本</h1>
+
+        <!-- 服务状态面板 -->
+        <div class="status-panel">
+            <h3>🌐 服务状态</h3>
+            <div class="status-item">
+                <span>语音RAG服务 (8087)</span>
+                <div class="status-indicator status-unknown" id="voiceRagStatus"></div>
+            </div>
+            <div class="status-item">
+                <span>RAG服务 (8085)</span>
+                <div class="status-indicator status-unknown" id="ragStatus"></div>
+            </div>
+            <div class="status-item">
+                <span>活动服务 (5001)</span>
+                <div class="status-indicator status-unknown" id="activityStatus"></div>
+            </div>
+        </div>
+
+        <!-- 语音控制区域 -->
+        <div class="voice-controls">
+            <button class="voice-button" id="voiceButton" onclick="toggleRecording()">
+                🎤
+            </button>
+            <div style="margin-top: 15px;">
+                <div id="buttonStatus">点击开始语音对话</div>
+            </div>
+        </div>
+
+        <!-- 录音指示器 -->
+        <div class="recording-indicator" id="recordingIndicator">
+            <div class="waves">
+                <div class="wave"></div>
+                <div class="wave"></div>
+                <div class="wave"></div>
+                <div class="wave"></div>
+            </div>
+            <div>🎙️ 正在录音... <span id="recordingTime">0</span>s</div>
+        </div>
+
+        <!-- 对话区域 -->
+        <div class="chat-area" id="chatArea">
+            <div class="message system">
+                👋 欢迎使用语音RAG测试！点击麦克风按钮开始对话
+            </div>
+        </div>
+
+        <!-- 控制按钮 -->
+        <div class="controls">
+            <button class="btn btn-primary" onclick="checkAllServices()">🔍 检查服务</button>
+            <button class="btn btn-secondary" onclick="clearChat()">🗑️ 清空对话</button>
+            <button class="btn btn-secondary" onclick="testService()">🧪 测试服务</button>
+        </div>
+
+        <!-- 日志区域 -->
+        <div class="log-area" id="logArea"></div>
+    </div>
+
+    <script>
+        // 全局变量
+        let isRecording = false;
+        let isProcessing = false;
+        let mediaRecorder = null;
+        let audioStream = null;
+        let audioChunks = [];
+        let recordingTimer = null;
+        let recordingTime = 0;
+
+        // 服务URL配置
+        const SERVICES = {
+            voiceRag: 'http://localhost:8087',
+            rag: 'http://localhost:8085',
+            activity: 'http://localhost:5001'
+        };
+
+        // 日志函数
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logArea = document.getElementById('logArea');
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `[${timestamp}] ${message}`;
+            logEntry.style.color = type === 'error' ? '#f87171' : type === 'success' ? '#4ade80' : '#ffffff';
+            logArea.appendChild(logEntry);
+            logArea.scrollTop = logArea.scrollHeight;
+            console.log(`[VoiceRAG] ${message}`);
+        }
+
+        // 添加消息到聊天区域
+        function addMessage(text, sender = 'system') {
+            const chatArea = document.getElementById('chatArea');
+            const message = document.createElement('div');
+            message.className = `message ${sender}`;
+            message.textContent = text;
+            chatArea.appendChild(message);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        // 更新按钮状态
+        function updateButtonStatus(text, emoji = '🎤') {
+            document.getElementById('buttonStatus').textContent = text;
+            document.getElementById('voiceButton').innerHTML = emoji;
+        }
+
+        // 检查单个服务状态
+        async function checkServiceStatus(url, statusElementId) {
+            const statusElement = document.getElementById(statusElementId);
+            try {
+                let healthUrl;
+
+                // 根据不同服务使用不同的健康检查端点
+                if (url.includes('8087')) {
+                    healthUrl = `${url}/api/health`;  // 语音RAG服务
+                } else if (url.includes('8085')) {
+                    healthUrl = `${url}/health/`;     // RAG服务
+                } else if (url.includes('5001')) {
+                    healthUrl = `${url}/api/query`;   // 活动服务（使用query端点测试）
+                } else {
+                    healthUrl = `${url}/api/health`;  // 默认
+                }
+
+                const response = await fetch(healthUrl, {
+                    method: url.includes('5001') ? 'POST' : 'GET',
+                    headers: url.includes('5001') ? {'Content-Type': 'application/json'} : {},
+                    body: url.includes('5001') ? JSON.stringify({message: 'health check'}) : undefined,
+                    timeout: 3000
+                });
+
+                if (response.ok) {
+                    statusElement.className = 'status-indicator status-connected';
+                    return true;
+                } else {
+                    statusElement.className = 'status-indicator status-disconnected';
+                    return false;
+                }
+            } catch (error) {
+                statusElement.className = 'status-indicator status-disconnected';
+                return false;
+            }
+        }
+
+        // 检查所有服务
+        async function checkAllServices() {
+            log('🔍 检查所有服务状态...');
+
+            const voiceRagOk = await checkServiceStatus(SERVICES.voiceRag, 'voiceRagStatus');
+            const ragOk = await checkServiceStatus(SERVICES.rag, 'ragStatus');
+            const activityOk = await checkServiceStatus(SERVICES.activity, 'activityStatus');
+
+            log(`语音RAG服务: ${voiceRagOk ? '✅ 正常' : '❌ 异常'}`, voiceRagOk ? 'success' : 'error');
+            log(`RAG服务: ${ragOk ? '✅ 正常' : '❌ 异常'}`, ragOk ? 'success' : 'error');
+            log(`活动服务: ${activityOk ? '✅ 正常' : '❌ 异常'}`, activityOk ? 'success' : 'error');
+        }
+
+        // 测试语音RAG服务
+        async function testService() {
+            log('🧪 测试语音RAG服务...');
+
+            try {
+                const response = await fetch(`${SERVICES.voiceRag}/api/status`);
+                if (response.ok) {
+                    const data = await response.json();
+                    log(`✅ 服务测试成功: ${JSON.stringify(data)}`, 'success');
+                    addMessage(`服务配置: Whisper模型=${data.whisper_model}, 设备=${data.device}`, 'system');
+                } else {
+                    log(`❌ 服务测试失败: ${response.status}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ 服务测试异常: ${error.message}`, 'error');
+            }
+        }
+
+        // 开始录音
+        async function startRecording() {
+            try {
+                log('🎤 开始录音...');
+
+                // 请求麦克风权限
+                audioStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+
+                // 创建MediaRecorder
+                mediaRecorder = new MediaRecorder(audioStream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
+
+                audioChunks = [];
+                recordingTime = 0;
+
+                // 监听数据可用事件
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                };
+
+                // 监听停止事件
+                mediaRecorder.onstop = async () => {
+                    await processAudio();
+                };
+
+                // 开始录音
+                mediaRecorder.start(100);
+                isRecording = true;
+
+                // 更新UI
+                document.getElementById('voiceButton').className = 'voice-button recording';
+                document.getElementById('recordingIndicator').className = 'recording-indicator show';
+                updateButtonStatus('点击停止录音', '🛑');
+
+                // 开始计时
+                recordingTimer = setInterval(() => {
+                    recordingTime++;
+                    document.getElementById('recordingTime').textContent = recordingTime;
+
+                    // 最大录音时间30秒
+                    if (recordingTime >= 30) {
+                        stopRecording();
+                    }
+                }, 1000);
+
+                log('✅ 录音已开始', 'success');
+
+            } catch (error) {
+                log(`❌ 启动录音失败: ${error.message}`, 'error');
+                addMessage(`录音失败: ${error.message}`, 'system');
+
+                if (error.name === 'NotAllowedError') {
+                    addMessage('请允许访问麦克风以使用语音功能', 'system');
+                }
+            }
+        }
+
+        // 停止录音
+        function stopRecording() {
+            if (!isRecording) return;
+
+            try {
+                // 停止录音
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                }
+
+                // 停止音频流
+                if (audioStream) {
+                    audioStream.getTracks().forEach(track => track.stop());
+                }
+
+                // 清理定时器
+                if (recordingTimer) {
+                    clearInterval(recordingTimer);
+                    recordingTimer = null;
+                }
+
+                isRecording = false;
+
+                // 更新UI
+                document.getElementById('voiceButton').className = 'voice-button processing';
+                document.getElementById('recordingIndicator').className = 'recording-indicator';
+                updateButtonStatus('AI正在思考...', '⏳');
+
+                log('⏹️ 录音已停止', 'success');
+
+            } catch (error) {
+                log(`❌ 停止录音失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 处理音频
+        async function processAudio() {
+            if (audioChunks.length === 0) {
+                addMessage('没有录制到音频数据', 'system');
+                resetUI();
+                return;
+            }
+
+            isProcessing = true;
+
+            try {
+                log('🔄 开始处理音频...');
+
+                // 合并音频块
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                log(`📁 音频数据大小: ${(audioBlob.size / 1024).toFixed(2)} KB`);
+
+                // 转换为Base64
+                const base64Audio = await blobToBase64(audioBlob);
+
+                // 发送到语音RAG服务
+                const response = await fetch(`${SERVICES.voiceRag}/api/voice/process`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        audio_data: base64Audio,
+                        format: 'webm'
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`服务器返回错误: ${response.status}`);
+                }
+
+                const result = await response.json();
+                log(`📥 收到语音RAG响应: ${JSON.stringify(result)}`, 'success');
+
+                if (result.success) {
+                    // 显示转录结果
+                    if (result.transcription) {
+                        addMessage(result.transcription, 'user');
+                        log(`📝 语音转录: ${result.transcription}`, 'success');
+                    }
+
+                    // 显示AI回复
+                    if (result.response_text) {
+                        addMessage(result.response_text, 'ai');
+                        log(`🤖 AI回复: ${result.response_text}`, 'success');
+
+                        // 播放语音回复
+                        if (result.audio_url) {
+                            playAudioResponse(result.audio_url);
+                        }
+                    }
+
+                    log(`⚡ 处理时间: ${result.processing_time.toFixed(2)}s`, 'success');
+                } else {
+                    throw new Error(result.error || '处理失败');
+                }
+
+            } catch (error) {
+                log(`❌ 音频处理失败: ${error.message}`, 'error');
+                addMessage(`处理失败: ${error.message}`, 'system');
+            } finally {
+                isProcessing = false;
+                resetUI();
+            }
+        }
+
+        // Blob转Base64
+        function blobToBase64(blob) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        }
+
+        // 播放音频回复
+        async function playAudioResponse(audioUrl) {
+            try {
+                if (!audioUrl) return;
+
+                const audio = new Audio(audioUrl);
+                await audio.play();
+                log('🔊 开始播放AI语音回复', 'success');
+
+            } catch (error) {
+                log(`❌ 播放音频失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 重置UI
+        function resetUI() {
+            document.getElementById('voiceButton').className = 'voice-button';
+            updateButtonStatus('点击开始语音对话', '🎤');
+        }
+
+        // 切换录音状态
+        function toggleRecording() {
+            if (isProcessing) return;
+
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        }
+
+        // 清空对话
+        function clearChat() {
+            document.getElementById('chatArea').innerHTML = '<div class="message system">👋 对话已清空，点击麦克风按钮开始新的对话</div>';
+            log('🗑️ 对话已清空');
+        }
+
+        // 页面加载完成后检查服务
+        window.addEventListener('load', () => {
+            log('🚀 页面加载完成，开始检查服务状态...');
+            checkAllServices();
+        });
+    </script>
+</body>
+</html>

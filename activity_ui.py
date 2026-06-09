@@ -30,7 +30,7 @@ app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 # 添加CORS支持，允许前端跨域访问
-CORS(app, origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"])
+CORS(app, origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174"])
 
 # 确保templates目录存在
 os.makedirs('templates', exist_ok=True)
@@ -61,28 +61,28 @@ async def query_activity():
     """处理活动查询API请求"""
     data = request.json
     user_message = data.get('message', '')
-    
+
     # 将用户消息添加到历史
     chat_history.append({"role": "user", "content": user_message})
-    
+
     # 创建自定义提示词，现在将用户完整消息作为主要输入，让后端判断时间
     # 后端将根据 query_text (即 user_message) 来解析时间，或者使用默认回退机制
     custom_prompt_for_llm = f"""请根据屏幕活动记录回答用户的问题: {user_message}
 如果问题无法直接从活动记录中回答，请基于你的知识进行回答，并说明这不是从我的屏幕活动中得出的结论。
 如果用户的问题中包含类似"昨天"、"今天上午"、"上周"等时间描述，请确保你的回答严格基于该时间段的活动记录。
 """
-    
+
     # 查询活动
     result = await query_recent_activity(query_text=user_message, custom_prompt=custom_prompt_for_llm)
-    
+
     # 将助手回复添加到历史
     chat_history.append({"role": "assistant", "content": result})
-    
+
     # 限制历史记录长度，避免占用过多内存
     if len(chat_history) > 100:
         chat_history.pop(0)
         chat_history.pop(0)
-    
+
     return jsonify({
         'result': result,
         'query_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -192,22 +192,22 @@ def activity_stats():
     """获取活动统计信息"""
     try:
         records = get_all_activity_records(100)  # 获取最近100条记录
-        
+
         # 统计信息
         total_records = len(records)
         app_counts = {}
         record_types = {}
-        
+
         for record in records:
             app_name = record.get('app_name', 'Unknown')
             record_type = record.get('record_type', 'unknown')
-            
+
             app_counts[app_name] = app_counts.get(app_name, 0) + 1
             record_types[record_type] = record_types.get(record_type, 0) + 1
-        
+
         # 获取最活跃的应用
         top_apps = sorted(app_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-        
+
         return jsonify({
             'total_records': total_records,
             'top_apps': top_apps,
@@ -224,7 +224,7 @@ def real_time_activities():
     try:
         limit = request.args.get('limit', 20, type=int)
         records = get_all_activity_records(limit)
-        
+
         # 格式化时间和内容
         formatted_records = []
         for record in records:
@@ -241,7 +241,7 @@ def real_time_activities():
                 'mouse_y': record.get('mouse_y')
             }
             formatted_records.append(formatted_record)
-        
+
         return jsonify({
             'activities': formatted_records,
             'count': len(formatted_records)
@@ -256,7 +256,7 @@ def get_keywords():
     try:
         # 获取时间范围参数
         hours = request.args.get('hours', 24, type=int)  # 默认24小时
-        
+
         # 根据时间范围动态调整获取记录数量
         if hours <= 6:
             limit = 500   # 6小时内获取500条
@@ -268,35 +268,35 @@ def get_keywords():
             limit = 3000  # 48小时内获取3000条
         else:
             limit = 5000  # 7天获取5000条
-        
+
         # 计算时间范围
         import re
         from collections import Counter
         from datetime import datetime, timedelta
         import sqlite3
-        
+
         cutoff_time = datetime.now() - timedelta(hours=hours)
         cutoff_time_iso = cutoff_time.isoformat()
-        
+
         # 直接从数据库按时间范围获取记录
         conn = create_connection(DATABASE_FILE)
         if not conn:
             return jsonify({'error': '无法连接到数据库'}), 500
-        
+
         records = []
         try:
             cursor = conn.cursor()
             # 查询指定时间范围内的记录，按时间戳降序排序
             query = """
                 SELECT timestamp, app_name, window_title, page_title, ocr_text, url
-                FROM activity_log 
-                WHERE timestamp >= ? 
-                ORDER BY timestamp DESC 
+                FROM activity_log
+                WHERE timestamp >= ?
+                ORDER BY timestamp DESC
                 LIMIT ?
             """
             cursor.execute(query, (cutoff_time_iso, limit))
             rows = cursor.fetchall()
-            
+
             # 转换为字典格式
             columns = ['timestamp', 'app_name', 'window_title', 'page_title', 'ocr_text', 'url']
             for row in rows:
@@ -304,14 +304,14 @@ def get_keywords():
                 for i, column in enumerate(columns):
                     record[column] = row[i]
                 records.append(record)
-                
+
             logging.info(f"从数据库获取了 {len(records)} 条记录 (时间范围: {hours}小时, 限制: {limit}条)")
         except sqlite3.Error as e:
             logging.error(f"查询数据库失败: {e}")
             return jsonify({'error': f'数据库查询失败: {e}'}), 500
         finally:
             conn.close()
-        
+
         # 收集所有文本内容
         all_text = []
         for record in records:
@@ -319,35 +319,35 @@ def get_keywords():
             ocr_text = record.get('ocr_text', '')
             if ocr_text:
                 all_text.append(ocr_text)
-            
+
             # 提取窗口标题
             window_title = record.get('window_title', '')
             if window_title and window_title not in ['Unknown', 'Untitled']:
                 all_text.append(window_title)
-            
+
             # 提取页面标题
             page_title = record.get('page_title', '')
             if page_title:
                 all_text.append(page_title)
-        
+
         if not all_text:
             return jsonify({
                 'keywords': [],
                 'total_text_length': 0,
                 'hours': hours
             })
-        
+
         # 合并所有文本
         combined_text = ' '.join(all_text)
-        
+
         # 简单的关键词提取
         # 移除标点符号，转换为小写，分割单词
         import string
-        
+
         # 清理文本
         cleaned_text = re.sub(r'[^\w\s\u4e00-\u9fff]', ' ', combined_text.lower())
         words = cleaned_text.split()
-        
+
         # 过滤条件
         stop_words = {
             # 英文停用词
@@ -398,23 +398,23 @@ def get_keywords():
             'click', 'hover', 'focus', 'blur', 'change', 'submit', 'reset', 'load', 'unload', 'resize',
             'scroll', 'keydown', 'keyup', 'keypress', 'mousedown', 'mouseup', 'mousemove',
         }
-        
+
         # 过滤单词
         filtered_words = [
-            word for word in words 
+            word for word in words
             if len(word) >= 2 and  # 至少2个字符
             word not in stop_words and  # 不在停用词中
             not word.isdigit() and  # 不是纯数字
             not re.match(r'^[a-z]$', word)  # 不是单个字母
         ]
-        
+
         # 统计词频
         word_counts = Counter(filtered_words)
-        
+
         # 分离中文和英文关键词
         chinese_words = []
         english_words = []
-        
+
         for word, count in word_counts.items():
             if count >= 1:  # 至少出现1次
                 # 检查是否包含中文字符
@@ -431,18 +431,18 @@ def get_keywords():
                         not re.match(r'^[a-z]{1,3}$', word) and  # 不是1-3个字母的简短缩写
                         word not in ['item', 'icon', 'list', 'grid', 'card', 'tabs']):  # 保留一些有意义的词如menu, text, panel
                         english_words.append((word, count))
-        
+
         # 按词频排序
         chinese_words.sort(key=lambda x: x[1], reverse=True)
         english_words.sort(key=lambda x: x[1], reverse=True)
-        
+
         # 取前25个中文词和前25个英文词
         top_chinese = chinese_words[:25]
         top_english = english_words[:25]
-        
+
         # 合并并格式化输出
         keywords = []
-        
+
         # 添加中文关键词
         for word, count in top_chinese:
             keywords.append({
@@ -450,7 +450,7 @@ def get_keywords():
                 'count': count,
                 'size': min(36, max(14, count * 1.5))  # 中文字体稍小一些
             })
-        
+
         # 添加英文关键词
         for word, count in top_english:
             keywords.append({
@@ -458,10 +458,10 @@ def get_keywords():
                 'count': count,
                 'size': min(32, max(12, count * 1.2))  # 英文字体更小一些
             })
-        
+
         # 按词频重新排序
         keywords.sort(key=lambda x: x['count'], reverse=True)
-        
+
         return jsonify({
             'keywords': keywords,
             'total_text_length': len(combined_text),
@@ -469,7 +469,7 @@ def get_keywords():
             'records_count': len(records),
             'hours': hours
         })
-        
+
     except Exception as e:
         logging.error(f"获取关键词数据失败: {e}")
         return jsonify({'error': str(e)}), 500
@@ -480,14 +480,14 @@ def activity_search():
     try:
         query = request.args.get('query', '')
         limit = request.args.get('limit', 50, type=int)
-        
+
         if not query:
             return jsonify({'activities': [], 'count': 0})
-        
+
         # 简单的关键词搜索
         all_records = get_all_activity_records(1000)  # 搜索更多记录
         filtered_records = []
-        
+
         for record in all_records:
             # 搜索应用名、窗口标题、OCR文本
             searchable_text = ' '.join([
@@ -496,7 +496,7 @@ def activity_search():
                 record.get('ocr_text', ''),
                 record.get('url', '')
             ]).lower()
-            
+
             if query.lower() in searchable_text:
                 formatted_record = {
                     'id': record.get('id'),
@@ -509,10 +509,10 @@ def activity_search():
                     'parser_type': record.get('parser_type')
                 }
                 filtered_records.append(formatted_record)
-                
+
                 if len(filtered_records) >= limit:
                     break
-        
+
         return jsonify({
             'activities': filtered_records,
             'count': len(filtered_records),
@@ -529,29 +529,29 @@ def debug_db_status():
         conn = create_connection(DATABASE_FILE)
         if not conn:
             return jsonify({'error': '无法连接到数据库', 'db_file': DATABASE_FILE}), 500
-        
+
         cursor = conn.cursor()
-        
+
         # 检查表是否存在
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='activity_log';")
         table_exists = cursor.fetchone() is not None
-        
+
         total_records = 0
         recent_records = 0
-        
+
         if table_exists:
             # 获取总记录数
             cursor.execute("SELECT COUNT(*) FROM activity_log;")
             total_records = cursor.fetchone()[0]
-            
+
             # 获取最近24小时的记录数
             cutoff_time = datetime.now() - timedelta(hours=24)
             cutoff_time_iso = cutoff_time.isoformat()
             cursor.execute("SELECT COUNT(*) FROM activity_log WHERE timestamp >= ?;", (cutoff_time_iso,))
             recent_records = cursor.fetchone()[0]
-        
+
         conn.close()
-        
+
         return jsonify({
             'db_file': DATABASE_FILE,
             'db_exists': os.path.exists(DATABASE_FILE),
@@ -564,10 +564,213 @@ def debug_db_status():
         logging.error(f"数据库状态检查失败: {e}")
         return jsonify({'error': str(e), 'db_file': DATABASE_FILE}), 500
 
+@app.route('/api/app_usage_summary', methods=['POST'])
+async def app_usage_summary():
+    """生成特定应用的使用总结"""
+    try:
+        data = request.json
+        app_name = data.get('app_name', '')
+        period = data.get('period', 'today')
+        duration_seconds = data.get('duration_seconds', 0)
+
+        if not app_name:
+            return jsonify({'error': '应用名称不能为空'}), 400
+
+        # 计算时间范围
+        now = datetime.now()
+        start_time_dt = None
+        end_time_dt = None
+
+        if period == 'today':
+            start_time_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_time_dt = now
+        elif period == 'yesterday':
+            yesterday_dt = now - timedelta(days=1)
+            start_time_dt = yesterday_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_time_dt = yesterday_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+        elif period == 'this_week':
+            start_of_week = now - timedelta(days=now.weekday())
+            start_time_dt = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_time_dt = now
+        elif period == 'this_month':
+            start_time_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            end_time_dt = now
+        else:
+            start_time_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_time_dt = now
+
+        # 从数据库获取该应用的活动记录
+        conn = create_connection(DATABASE_FILE)
+        if not conn:
+            return jsonify({'error': '无法连接到数据库'}), 500
+
+        try:
+            cursor = conn.cursor()
+
+            # 查询指定应用在时间范围内的活动记录
+            query = """
+                SELECT id, timestamp, app_name, window_title, page_title, ocr_text, url,
+                       record_type, mouse_x, mouse_y
+                FROM activity_log
+                WHERE app_name = ? AND timestamp >= ? AND timestamp <= ?
+                ORDER BY timestamp DESC
+                LIMIT 50
+            """
+            cursor.execute(query, (app_name, start_time_dt.isoformat(), end_time_dt.isoformat()))
+            rows = cursor.fetchall()
+
+            # 转换为记录列表
+            activities = []
+            for row in rows:
+                activity = {
+                    'id': row[0],
+                    'timestamp': row[1],
+                    'app_name': row[2],
+                    'window_title': row[3] or '',
+                    'page_title': row[4] or '',
+                    'ocr_text': row[5] or '',
+                    'url': row[6] or '',
+                    'record_type': row[7] or '',
+                    'mouse_x': row[8],
+                    'mouse_y': row[9]
+                }
+                activities.append(activity)
+
+        finally:
+            conn.close()
+
+        if not activities:
+            return jsonify({
+                'summary': f'在{get_period_name(period)}期间没有使用 {app_name} 的记录。',
+                'key_activities': []
+            })
+
+        # 构建LLM提示词
+        activity_context = ""
+        for i, activity in enumerate(activities[:20], 1):  # 只取前20条
+            timestamp = activity['timestamp']
+            context_parts = []
+
+            if activity['window_title']:
+                context_parts.append(f"窗口: {activity['window_title']}")
+            if activity['page_title']:
+                context_parts.append(f"页面: {activity['page_title']}")
+            if activity['url']:
+                context_parts.append(f"URL: {activity['url']}")
+            if activity['ocr_text']:
+                # 截取OCR文本的前100个字符
+                ocr_snippet = activity['ocr_text'][:100] + '...' if len(activity['ocr_text']) > 100 else activity['ocr_text']
+                context_parts.append(f"屏幕内容: {ocr_snippet}")
+
+            context_str = " | ".join(context_parts)
+            activity_context += f"{i}. [{timestamp}] {context_str}\n"
+
+        # 格式化使用时长
+        hours, remainder = divmod(duration_seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        duration_str = f"{int(hours)}小时{int(minutes)}分钟" if hours > 0 else f"{int(minutes)}分钟"
+
+        # 构建LLM提示词
+        prompt = f"""请基于以下信息，生成一个关于用户使用 {app_name} 应用的智能总结：
+
+**应用名称：** {app_name}
+**使用时间段：** {get_period_name(period)}
+**总使用时长：** {duration_str}
+**活动记录数量：** {len(activities)} 条
+
+**详细活动记录：**
+{activity_context}
+
+请生成一个简洁但信息丰富的使用总结，包括：
+1. 使用模式分析（什么时间使用较多，主要用途等）
+2. 主要活动内容（基于窗口标题、页面标题、URL和屏幕内容）
+3. 使用频率和习惯
+4. 可能的工作或娱乐场景
+
+请用markdown格式回答，语言要专业但易懂。不要包含过多技术细节，重点关注用户的使用模式和行为分析。
+"""
+
+        # 调用LLM生成总结
+        try:
+            summary_result = await query_recent_activity(
+                query_text=f"分析 {app_name} 的使用情况",
+                custom_prompt=prompt
+            )
+        except Exception as e:
+            logging.error(f"LLM生成总结失败: {e}")
+            summary_result = f"基于 {len(activities)} 条活动记录的简单总结：用户在{get_period_name(period)}使用了 {app_name} 共 {duration_str}。"
+
+        # 提取关键活动（按时间分组，取代表性活动）
+        key_activities = []
+        if len(activities) > 0:
+            # 按时间分组，每2小时取一个代表性活动
+            time_groups = {}
+            for activity in activities:
+                try:
+                    timestamp = datetime.fromisoformat(activity['timestamp'].replace('Z', '+00:00'))
+                    hour_group = timestamp.replace(minute=0, second=0, microsecond=0)
+                    # 每2小时一组
+                    group_key = hour_group.replace(hour=(hour_group.hour // 2) * 2)
+
+                    if group_key not in time_groups:
+                        time_groups[group_key] = []
+                    time_groups[group_key].append(activity)
+                except:
+                    continue
+
+            # 从每个时间组中选择最有代表性的活动
+            for group_time, group_activities in sorted(time_groups.items()):
+                if group_activities:
+                    # 选择有最多上下文信息的活动
+                    best_activity = max(group_activities, key=lambda a: len(a.get('window_title', '') + a.get('page_title', '') + a.get('url', '')))
+
+                    description_parts = []
+                    if best_activity.get('window_title'):
+                        description_parts.append(best_activity['window_title'])
+                    if best_activity.get('page_title') and best_activity['page_title'] != best_activity.get('window_title'):
+                        description_parts.append(best_activity['page_title'])
+                    if best_activity.get('url'):
+                        description_parts.append(f"访问: {best_activity['url']}")
+
+                    description = " - ".join(description_parts) if description_parts else f"使用 {app_name}"
+
+                    key_activities.append({
+                        'id': best_activity['id'],
+                        'timestamp': best_activity['timestamp'],
+                        'description': description
+                    })
+
+                # 限制关键活动数量
+                if len(key_activities) >= 10:
+                    break
+
+        return jsonify({
+            'summary': summary_result,
+            'key_activities': key_activities,
+            'total_records': len(activities),
+            'period': period,
+            'app_name': app_name,
+            'duration_str': duration_str
+        })
+
+    except Exception as e:
+        logging.error(f"生成应用使用总结失败: {e}")
+        return jsonify({'error': f'生成总结失败: {str(e)}'}), 500
+
+def get_period_name(period):
+    """获取期间的中文名称"""
+    period_map = {
+        'today': '今天',
+        'yesterday': '昨天',
+        'this_week': '本周',
+        'this_month': '本月'
+    }
+    return period_map.get(period, period)
+
 if __name__ == "__main__":
     # 启动应用
     print("正在启动Flask应用...")
-    
+
     # 在后台线程中启动初始数据加载
     print("正在后台启动初始数据加载... 这可能需要几分钟时间，请耐心等待。")
     load_thread = threading.Thread(target=initial_load_data, daemon=True)
@@ -575,4 +778,4 @@ if __name__ == "__main__":
 
     print("Flask应用已准备好处理请求。")
     # 端口改回5001，与前端和用户日志保持一致
-    app.run(debug=False, port=5001, host='0.0.0.0') 
+    app.run(debug=False, port=5001, host='0.0.0.0')

@@ -5,6 +5,7 @@ from .fetch_tool import FetchTool
 from .time_tool import TimeTool
 from .filesystem_tool import FilesystemTool
 from .browser_tool import BrowserTool
+from .chrome_tool import ChromeTool
 from .sequential_thinking_tool import SequentialThinkingTool
 from .duckduckgo_tool import DuckDuckGoTool
 from .baidu_map_tool import BaiduMapTool
@@ -13,41 +14,43 @@ logger = logging.getLogger(__name__)
 
 class ToolRegistry:
     """工具注册表类"""
-    
+
     def __init__(self, mcp_base_url: str = None):  # 接受可选参数
         self.mcp_base_url = mcp_base_url or "http://127.0.0.1:8000"
         self.tools: Dict[str, BaseMCPTool] = {}
         self._initialize_tools()
-    
+
     def _initialize_tools(self):
         """初始化所有工具"""
         try:
             # 注册所有工具，传递base_url参数
+            # Chrome工具使用独立的端口配置
             self.tools = {
                 "web": FetchTool(self.mcp_base_url),
                 "time": TimeTool(self.mcp_base_url),
                 "filesystem": FilesystemTool(self.mcp_base_url),
                 "browser": BrowserTool(self.mcp_base_url),
+                "chrome": ChromeTool(),  # Chrome工具内部使用固定的12306端口
                 "sequential_thinking": SequentialThinkingTool(self.mcp_base_url),
                 "duckduckgo": DuckDuckGoTool(self.mcp_base_url),
                 "baidu_map": BaiduMapTool(self.mcp_base_url)
             }
-            
+
             logger.info(f"已注册 {len(self.tools)} 个MCP工具")
             for tool_id, tool in self.tools.items():
                 logger.info(f"- {tool_id}: {tool.tool_name}")
-                
+
         except Exception as e:
             logger.error(f"初始化工具失败: {e}")
-    
+
     def get_tool(self, tool_id: str) -> Optional[BaseMCPTool]:
         """根据工具ID获取工具实例"""
         return self.tools.get(tool_id)
-    
+
     def get_all_tools(self) -> Dict[str, BaseMCPTool]:
         """获取所有注册的工具"""
         return self.tools.copy()
-    
+
     def discover_relevant_tools(self, user_query: str) -> List[str]:
         """
         基于用户查询智能发现相关工具
@@ -55,11 +58,11 @@ class ToolRegistry:
         """
         query_lower = user_query.lower()
         tool_scores = {}
-        
+
         # 工具关键词映射（增强版）
         tool_keywords = {
             "web": [
-                "网页", "网站", "链接", "url", "http", "https", "抓取", "爬虫", 
+                "网页", "网站", "链接", "url", "http", "https", "抓取", "爬虫",
                 "网络", "下载", "fetch", "web", "site", "page", "html", "内容获取"
             ],
             "time": [
@@ -68,26 +71,69 @@ class ToolRegistry:
                 "年", "月", "日", "小时", "分钟", "秒", "时区", "timezone"
             ],
             "filesystem": [
-                "文件", "文件夹", "目录", "桌面", "读取", "写入", "创建", "删除", 
+                "文件", "文件夹", "目录", "桌面", "读取", "写入", "创建", "删除",
                 "移动", "复制", "重命名", "搜索", "查看", "保存", "打开",
-                "file", "folder", "directory", "desktop", "read", "write", 
+                "file", "folder", "directory", "desktop", "read", "write",
                 "create", "delete", "move", "copy", "rename", "search", "save", "open",
                 "txt", "文档", "记事本", "列表", "内容", "信息", "属性",
                 "新建", "建立", "编辑", "修改", "浏览", "查找", "定位"
             ],
+            "chrome": [
+                # 浏览器管理
+                "当前浏览器", "这个页面", "当前标签页", "打开标签页", "关闭标签页",
+                "浏览器窗口", "标签页管理", "导航", "前进", "后退", "刷新",
+
+                # 页面交互
+                "点击", "点击按钮", "点击链接", "填写", "填写表单", "输入", "选择",
+                "下拉选择", "键盘操作", "按键", "快捷键",
+
+                # 内容获取
+                "获取页面内容", "页面文本", "截图", "页面截图", "元素截图",
+                "提取内容", "当前页面", "这个网站",
+
+                # 浏览器数据 - 增强的历史记录查询关键词
+                "浏览历史", "搜索历史", "浏览记录", "访问记录", "历史记录",
+                "书签", "添加书签", "删除书签", "收藏",
+
+                # 时间相关的浏览历史查询
+                "分析浏览记录", "分析我的浏览", "我的浏览", "我浏览了", "都浏览了",
+                "访问了哪些", "浏览了哪些", "去了哪些", "看了哪些",
+                "近一个月", "最近访问", "最近浏览", "这个月", "一个月", "这段时间",
+                "昨天", "前天", "上周", "最近几天", "今天", "今天浏览",
+                "昨天浏览", "昨天访问", "昨天看了", "昨天去了",
+                "这周", "上个月", "最近一周", "最近的", "最近看的",
+                "我都去了", "我都看了", "我都访问了", "都访问了哪些",
+                "网页浏览", "网站访问", "浏览了什么", "访问了什么",
+
+                # 网络监控
+                "网络请求", "监听请求", "网络监控", "HTTP请求", "网络数据",
+
+                # 高级功能
+                "注入脚本", "JavaScript", "控制台", "调试", "搜索标签页内容",
+
+                # 直接操作指令
+                "在当前", "直接", "立即", "现在就", "马上", "快速", "简单"
+            ],
             "browser": [
-                "浏览器", "网页操作", "点击", "输入", "表单", "自动化", "selenium",
-                "browser", "click", "input", "form", "automation", "navigate",
-                "页面", "元素", "按钮", "链接", "滚动", "截图", "等待"
+                # 复杂自动化任务
+                "深度搜索", "自动化", "复杂任务", "多步骤", "批量处理",
+                "后台运行", "独立浏览器", "全自动", "无人值守",
+
+                # 研究分析
+                "研究", "调研", "分析", "数据抓取", "信息收集", "深度分析",
+                "竞品分析", "市场调研", "趋势分析", "报告生成",
+
+                # 大规模操作
+                "批量", "大量", "多个网站", "系统性", "全面", "详细调查"
             ],
             "sequential_thinking": [
                 "思考", "分析", "推理", "逻辑", "步骤", "计划", "策略", "解决",
-                "thinking", "analysis", "reasoning", "logic", "step", "plan", 
+                "thinking", "analysis", "reasoning", "logic", "step", "plan",
                 "strategy", "solve", "问题", "方案", "建议", "决策", "评估"
             ],
             "duckduckgo": [
                 "搜索", "查找", "查询", "检索", "信息", "资料", "新闻", "知识",
-                "search", "find", "query", "lookup", "information", "data", 
+                "search", "find", "query", "lookup", "information", "data",
                 "news", "knowledge", "百科", "答案", "结果", "内容"
             ],
             "baidu_map": [
@@ -99,7 +145,7 @@ class ToolRegistry:
                 "费用", "推荐", "搜索地点", "查找位置", "路径规划", "行程安排"
             ]
         }
-        
+
         # 计算每个工具的相关度得分
         for tool_id, keywords in tool_keywords.items():
             score = 0
@@ -111,41 +157,41 @@ class ToolRegistry:
                     # 包含关键词得基础分
                     else:
                         score += 1
-            
+
             if score > 0:
                 tool_scores[tool_id] = score
-        
+
         # 按得分排序，返回工具ID列表
         sorted_tools = sorted(tool_scores.items(), key=lambda x: x[1], reverse=True)
         return [tool_id for tool_id, score in sorted_tools]
-    
+
     def get_tool_info(self, tool_id: str) -> Dict[str, Any]:
         """获取工具的详细信息"""
         tool = self.get_tool(tool_id)
         if not tool:
             return {}
-        
+
         return {
             "id": tool_id,
             "name": tool.tool_name,
             "description": tool.description,
             "functions": tool.get_available_functions()
         }
-    
+
     def list_all_tools(self) -> List[Dict[str, Any]]:
         """列出所有工具的信息"""
         return [self.get_tool_info(tool_id) for tool_id in self.tools.keys()]
-    
+
     def format_tools_for_llm(self) -> str:
         """格式化所有工具信息供LLM理解"""
         formatted_tools = []
-        
+
         for tool_id, tool in self.tools.items():
             tool_info = tool.format_for_llm()
             formatted_tools.append(tool_info)
-        
+
         return "\n\n".join(formatted_tools)
-    
+
     async def execute_tool_function(self, tool_name: str, function_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """执行指定工具的函数"""
         try:
@@ -155,25 +201,25 @@ class ToolRegistry:
                     "status": "error",
                     "message": f"工具 '{tool_name}' 不存在"
                 }
-            
+
             # 执行工具函数
             result = await tool.execute_function(function_name, parameters)
             return result
-            
+
         except Exception as e:
             logger.error(f"执行工具函数失败: {tool_name}.{function_name} - {e}")
             return {
                 "status": "error",
                 "message": f"执行工具函数失败: {str(e)}"
             }
-    
+
     def get_tools_schema(self) -> Dict[str, Any]:
         """获取所有工具的schema信息"""
         schemas = {}
         for tool_id, tool in self.tools.items():
             schemas[tool_id] = tool.get_tool_schema()
         return schemas
-    
+
     def get_tool_usage_examples(self) -> Dict[str, List[str]]:
         """获取所有工具的使用示例"""
         examples = {}
@@ -187,4 +233,4 @@ class ToolRegistry:
         return examples
 
 # 全局工具注册表实例
-tool_registry = ToolRegistry() 
+tool_registry = ToolRegistry()

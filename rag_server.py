@@ -1,9 +1,16 @@
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from typing import List, Optional, Dict, Any
 import uvicorn
 from pydantic import BaseModel
-from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+try:
+    from langchain_chroma import Chroma
+except ImportError:
+    from langchain_community.vectorstores import Chroma
+
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except ImportError:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
 import jieba  # 添加中文分词
 import httpx
@@ -44,7 +51,6 @@ embeddings = HuggingFaceEmbeddings(
 vector_store = Chroma(embedding_function=embeddings, persist_directory="./video_chroma_db")
 
 # 初始化视频活动向量管理器
-from langchain_community.vectorstores import Chroma
 class VideoVectorManager:
     def __init__(self):
         self.vector_store = Chroma(
@@ -52,7 +58,7 @@ class VideoVectorManager:
             embedding_function=embeddings,
             persist_directory="./video_chroma_db"
         )
-    
+
     async def add_activity(self, activity_id, activity_data):
         """添加活动到向量数据库"""
         try:
@@ -60,9 +66,9 @@ class VideoVectorManager:
             content = activity_data.get('content', '')
             activity_type = activity_data.get('activity_type', '')
             start_time = activity_data.get('start_time', '')
-            
+
             document_text = f"活动类型: {activity_type} 活动描述: {content} 时间: {start_time}"
-            
+
             # 构建元数据
             metadata = {
                 "activity_id": activity_id,
@@ -70,7 +76,7 @@ class VideoVectorManager:
                 "start_time": start_time,
                 "source_type": activity_data.get('source_type', 'video_analysis')
             }
-            
+
             # 添加到向量数据库
             self.vector_store.add_texts(
                 texts=[document_text],
@@ -81,20 +87,20 @@ class VideoVectorManager:
         except Exception as e:
             logging.error(f"添加活动到向量数据库失败: {e}")
             return False
-    
+
     def search_activities(self, query, k=10, time_filter=None):
         """搜索活动"""
         try:
             # 先进行无过滤的搜索，然后在Python端进行时间过滤
             docs_with_scores = self.vector_store.similarity_search_with_score(query, k=k*2)
-            
+
             # 如果有时间过滤条件，在Python端进行过滤
             if time_filter and "start_time" in time_filter:
                 filtered_results = []
                 start_time_filter = time_filter["start_time"]
                 min_time = start_time_filter.get("$gte")
                 max_time = start_time_filter.get("$lte")
-                
+
                 for doc, score in docs_with_scores:
                     # 从元数据中获取活动的开始时间
                     activity_id = doc.metadata.get('activity_id')
@@ -114,9 +120,9 @@ class VideoVectorManager:
                         except Exception as e:
                             logging.warning(f"时间过滤时查询活动失败: {e}")
                             continue
-                
+
                 return filtered_results[:k]
-            
+
             return docs_with_scores[:k]
         except Exception as e:
             logging.error(f"向量搜索失败: {e}")
@@ -128,13 +134,13 @@ video_vector_manager = VideoVectorManager()
 # 定义停用词
 STOP_WORDS = {"监控", "显示", "在", "了", "吗", "什么", "的", "：", "，", "。", "年", "月", "日"}
 
-# 硅基流动API配置
-SILICONFLOW_API_KEY = "sk-xugvbuiyayzzfeoelfytnfioimnwvzouawxlavixynzuloui"
-SILICONFLOW_MODEL = "deepseek-ai/DeepSeek-V3"
+# 硅基流动API配置由 config.APIConfig 从环境变量读取
+SILICONFLOW_API_KEY = APIConfig.DEEPSEEK_API_KEY
+SILICONFLOW_MODEL = APIConfig.DEEPSEEK_MODEL
 
 # 修改监控关键词集合
 MONITORING_KEYWORDS = {
-    "监控", "摄像头", "发现", "检测到", "看到", "观察到", "显示", "记录", 
+    "监控", "摄像头", "发现", "检测到", "看到", "观察到", "显示", "记录",
     "camera", "detected", "视频", "画面", "拍到", "出现", "动作", "行为",
     "活动", "状态", "情况","什么时候"
 }
@@ -165,7 +171,7 @@ class ChatRequest(BaseModel):
 
 class WebpageRequest(BaseModel):
     url: str
-    
+
 class FilesystemRequest(BaseModel):
     path: str = "C:\\Users\\Jason\\Desktop"  # 默认桌面路径
 
@@ -211,7 +217,7 @@ async def add_activity(request: ActivityInput):
     try:
         activity_id = request.activity_id
         activity_data = request.activity_data
-        
+
         # 构建文档和元数据 (逻辑从 multi_modal_analyzer 迁移并优化)
         content = activity_data.get('content', '')
         activity_type = activity_data.get('activity_type', '')
@@ -227,21 +233,21 @@ async def add_activity(request: ActivityInput):
             time_period = "未知时段"
 
         document_text = f"在{natural_time}({time_period})，检测到活动: {activity_type}。具体描述: {content}"
-        
+
         metadata = {
             "activity_id": activity_id,
             "activity_type": activity_type,
             "start_time": start_time_str,
             "source_type": activity_data.get('source_type', 'video_analysis')
         }
-        
+
         # 添加到向量数据库
         video_vector_manager.vector_store.add_texts(
             texts=[document_text],
             metadatas=[metadata],
             ids=[f"video_activity_{activity_id}"]
         )
-        
+
         logging.info(f"活动已通过API添加到向量数据库: ID={activity_id}")
         return {"status": "success", "message": f"Activity {activity_id} added."}
     except Exception as e:
@@ -262,11 +268,11 @@ async def add_text(request: TextInput):
 
         if not texts_to_add:
             return {"status": "error", "message": "没有提供任何文档"}
-        
+
         total_added = 0
         # 使用分批处理来增加稳定性
         for text_batch, metadata_batch in zip(
-            batch_iterator(texts_to_add, 100), 
+            batch_iterator(texts_to_add, 100),
             batch_iterator(metadatas_to_add, 100)
         ):
             video_vector_manager.vector_store.add_texts(texts=text_batch, metadatas=metadata_batch)
@@ -286,25 +292,25 @@ async def search(request: SearchRequest):
     [重构] 从指定的集合中搜索文档。
     """
     target_store = video_vector_manager.vector_store if request.collection_name == "video_activities" else video_vector_manager.vector_store
-    
+
     if target_store is None:
         return {"status": "error", "message": f"集合 '{request.collection_name}' 对应的向量数据库未初始化"}
 
     try:
         query = request.query
         k = request.k
-        
+
         # 简化版：直接使用LLM进行问答，上下文来自向量搜索
         docs_with_scores = target_store.similarity_search_with_score(query, k=k)
-        
+
         if not docs_with_scores:
             return {"status": "success", "answer": f"抱歉，在 '{request.collection_name}' 集合中没有找到与您问题相关的信息。", "contexts": []}
 
         contexts = [doc.page_content for doc, score in docs_with_scores]
-        
+
         # [修复] 注入当前时间以解决相对时间查询问题
         current_time_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
+
         prompt = f"""现在是 {current_time_str}。请基于以下背景信息，简洁、直接地回答用户问题。
 
 背景信息:
@@ -317,9 +323,9 @@ async def search(request: SearchRequest):
 2. 如果信息不足以回答，就直接说 "根据现有信息无法回答"。
 3. 如果问题涉及时间计算（比如"几分钟前"），请根据当前时间进行计算后给出结果。
 """
-        
+
         answer = await LLMService.get_response(prompt)
-        
+
         return {
             "status": "success",
             "answer": answer,
@@ -346,7 +352,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     # 假设 VideoProcessor 或其流产生带有时间戳的记录
     # video_processor = VideoProcessor() # 实例化可能不应在此处进行
-    
+
     try:
         # 这里的实现需要调整，以获取带有时间戳的记录
         # 假设我们从某个地方获取 record = {'content': '...', 'timestamp': 'YYYY-MM-DD HH:MM:SS'}
@@ -358,7 +364,7 @@ async def websocket_endpoint(websocket: WebSocket):
         #         table_name=f"stream_{record['timestamp']}", # table_name 可以简化
         #         event_timestamps=[record['timestamp']] # 传递时间戳
         #     ))
-            
+
         #     # 发送更新到客户端
         #     await websocket.send_json({
         #         "type": "update",
@@ -369,7 +375,7 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             message = await websocket.receive_text() # 简单示例，实际可能不需要接收
             logging.info(f"Received message on /ws: {message}") # 日志记录
-            await asyncio.sleep(1) 
+            await asyncio.sleep(1)
 
     except WebSocketDisconnect:
          logging.info("WebSocket /ws disconnected.")
@@ -390,9 +396,9 @@ async def get_summaries(request: SearchRequest):
     try:
         # 特别搜索带有"总结"字样的文档
         modified_query = f"监控总结 {request.query}"
-        docs = vector_store.similarity_search_with_score(modified_query, k=request.k, 
+        docs = vector_store.similarity_search_with_score(modified_query, k=request.k,
                                                        filter={"source": {"$regex": "summary_.*"}})
-        
+
         if not docs:
             return {
                 "status": "success",
@@ -402,7 +408,7 @@ async def get_summaries(request: SearchRequest):
 
         # 直接返回总结内容
         summaries = [doc[0].page_content for doc in docs]
-        
+
         return {
             "status": "success",
             "answer": "\n\n".join(summaries),
@@ -436,38 +442,38 @@ async def extract_webpage(request: WebpageRequest):
             url = 'https://' + request.url
         else:
             url = request.url
-            
+
         # 请求MCPO Fetch服务
         response = requests.post(
             MCPO_FETCH_URL,
             json={"url": url, "max_length": 8000},
             timeout=30
         )
-        
+
         if response.status_code != 200:
             return {
                 "status": "error",
                 "message": f"无法获取网页内容: HTTP {response.status_code}"
             }
-            
+
         # 获取网页内容
         web_content = response.json()
-        
+
         # 构建提示词
         prompt = f"以下是从URL '{url}' 获取的网页内容。请分析并总结这个网页的主要内容。\n\n"
-        
+
         if isinstance(web_content, list) and len(web_content) > 0:
             content_text = web_content[0]
         elif isinstance(web_content, dict):
             content_text = web_content.get("content", str(web_content))
         else:
             content_text = str(web_content)
-            
+
         prompt += content_text
-        
+
         # 调用LLM生成回答
         summary = await LLMService.get_response(prompt)
-        
+
         return {
             "status": "success",
             "answer": summary,
@@ -489,24 +495,24 @@ async def get_time():
             json={"timezone": "Asia/Shanghai"},
             timeout=10
         )
-        
+
         if response.status_code != 200:
             return {
                 "status": "error",
                 "message": f"无法获取时间信息: HTTP {response.status_code}"
             }
-            
+
         # 获取时间信息
         time_info = response.json()
-        
+
         # 准备提示词给大模型，包含原始时间数据
         prompt = f"以下是从时间服务获取的数据: {json.dumps(time_info, ensure_ascii=False)}\n\n"
         prompt += "请以自然友好的方式向用户展示当前的日期和时间信息。"
-       
-        
+
+
         # 调用大模型生成回答
         time_response = await LLMService.get_response(prompt)
-        
+
         return {
             "status": "success",
             "answer": time_response,
@@ -528,30 +534,30 @@ async def list_files(request: FilesystemRequest):
             json={"path": request.path},
             timeout=10
         )
-        
+
         if response.status_code != 200:
             return {
                 "status": "error",
                 "message": f"无法获取文件列表: HTTP {response.status_code}"
             }
-            
+
         # 获取文件列表
         file_list = response.json()
-        
+
         if isinstance(file_list, dict) and "error" in file_list:
             return {
                 "status": "error",
                 "message": file_list["error"]
             }
-            
+
         # 构建提示词
         filesystem_prompt = f"用户请求查看目录 '{request.path}' 中的文件和文件夹。\n\n"
         filesystem_prompt += f"以下是从文件系统获取的原始列表:\n{json.dumps(file_list, ensure_ascii=False)}\n\n"
         filesystem_prompt += "请以友好、有条理的方式向用户展示这些文件和文件夹。可以对内容进行分类（如分为文件夹和文件两类，或按文件类型分类），并简洁说明文件总数。"
-        
+
         # 调用LLM生成回答
         files_summary = await LLMService.get_response(filesystem_prompt)
-        
+
         return {
             "status": "success",
             "answer": files_summary,
@@ -568,7 +574,7 @@ async def list_files(request: FilesystemRequest):
 async def detect_intent(request: ChatRequest):
     """[待重构] 检测用户查询意图并调用相应服务"""
     query = request.query
-    
+
     try:
         # 1. 检查是否是视频活动相关问题 (现在应调用新的搜索)
         activity_keywords = ["睡觉", "玩手机", "喝水", "吃东西", "工作", "学习", "活动", "行为"]
@@ -582,7 +588,7 @@ async def detect_intent(request: ChatRequest):
         monitoring_keywords = ["监控", "总结", "摄像头", "发现", "看到", "记录"]
         if any(keyword in query for keyword in monitoring_keywords):
             logging.info("意图检测: 监控摘要查询")
-            search_req = SearchRequest(query=query, k=3, collection_name="text_summaries")
+            search_req = SearchRequest(query=query, k=3)
             return await search(search_req)
 
         # ... (保留其他意图检测逻辑：浏览器、搜索、URL、时间、文件等) ...
@@ -596,7 +602,7 @@ async def detect_intent(request: ChatRequest):
         logging.info("意图检测: 通用问答")
         prompt = f"用户问题: {query}\n\n请以友好的方式回答用户的问题。"
         model_response = await chat_completion(prompt)
-        
+
         return {"status": "success", "answer": model_response}
 
     except Exception as e:
@@ -611,14 +617,14 @@ async def list_docs(request: ListDocsRequest):
         filter_dict = {}
         if request.table_name:
             filter_dict["source"] = request.table_name
-            
+
         # 获取所有匹配的文档
         results = vector_store.get(
             where=filter_dict if filter_dict else None,
             limit=request.limit,
             offset=request.offset
         )
-        
+
         if not results['ids']:
             return {
                 "status": "success",
@@ -626,7 +632,7 @@ async def list_docs(request: ListDocsRequest):
                 "total": 0,
                 "documents": []
             }
-            
+
         # 整理文档信息
         documents = []
         for i in range(len(results['ids'])):
@@ -636,13 +642,13 @@ async def list_docs(request: ListDocsRequest):
                 "metadata": results['metadatas'][i] if results['metadatas'] else {},
             }
             documents.append(doc_info)
-            
+
         return {
             "status": "success",
             "total": len(documents),
             "documents": documents
         }
-        
+
     except Exception as e:
         logging.error(f"获取文档列表错误: {e}")
         return {
@@ -658,13 +664,13 @@ async def run_browser_agent(request: BrowserAgentRequest):
         request_data = {
             "task": request.task
         }
-        
+
         if request.add_infos:
             request_data["add_infos"] = request.add_infos
-            
+
         # 发送请求到MCP browser-use服务，增加超时时间并使用异步请求
         logging.info(f"调用browser-agent执行任务: {request.task}")
-        
+
         # 创建异步HTTP客户端
         async with httpx.AsyncClient(timeout=300.0) as client:
             try:
@@ -672,17 +678,17 @@ async def run_browser_agent(request: BrowserAgentRequest):
                     MCPO_BROWSER_AGENT_URL,
                     json=request_data
                 )
-                
+
                 if response.status_code != 200:
                     logging.error(f"调用browser-agent失败: {response.status_code}")
                     return {
                         "status": "success",  # 仍返回success以避免前端显示错误
                         "answer": f"我尝试执行浏览器任务'{request.task}'，但服务返回了错误。可能是网络问题或任务复杂度超出了能力范围。您可以尝试简化任务或稍后再试。",
                     }
-                
+
                 # 获取结果
                 result = response.json()
-                
+
                 # 将结果通过大模型处理
                 prompt = f"以下是我通过浏览器执行任务 '{request.task}' 的结果:\n\n"
                 if isinstance(result, list) and len(result) > 0:
@@ -690,10 +696,10 @@ async def run_browser_agent(request: BrowserAgentRequest):
                 else:
                     prompt += f"{result}\n\n"
                 prompt += "请以友好且有条理的方式总结这些结果，保留关键信息，并向用户展示最重要的发现。"
-                
+
                 # 调用大模型生成回答
                 browser_response = await LLMService.get_response(prompt)
-                
+
                 return {
                     "status": "success",
                     "answer": browser_response,
@@ -717,11 +723,11 @@ async def search_video_activities(query: str):
     try:
         import re
         from datetime import datetime, timedelta
-        
+
         # 时间解析
         time_info = None
         now = datetime.now()
-        
+
         if "昨天" in query or "昨日" in query:
             yesterday = now - timedelta(days=1)
             time_info = {
@@ -756,7 +762,7 @@ async def search_video_activities(query: str):
                 'date': week_start.strftime('%Y-%m-%d')
             }
             logging.info(f"检测到'本周'查询，时间范围: {time_info['start_time']} - {time_info['end_time']}")
-        
+
         # 活动类型检测
         activity_type = None
         activity_mapping = {
@@ -767,20 +773,20 @@ async def search_video_activities(query: str):
             "吃东西": "吃东西", "吃饭": "吃东西", "用餐": "吃东西",
             "工作": "专注工作学习", "学习": "专注工作学习", "专注": "专注工作学习"
         }
-        
+
         for keyword, mapped_type in activity_mapping.items():
             if keyword in query:
                 activity_type = mapped_type
                 break
-        
+
         # 判断查询类型
         is_duration_query = any(pattern in query for pattern in ["多长时间", "多久", "时长", "持续"])
         is_stats_query = any(pattern in query for pattern in ["总共", "一共", "平均", "最多", "最少", "次数"])
-        
+
         # 使用SQLite进行结构化查询
         if time_info or activity_type:
             activities = []
-            
+
             if time_info and activity_type:
                 # 时间+类型查询
                 logging.info(f"执行时间+类型查询: {activity_type}, 时间范围: {time_info['start_time']} - {time_info['end_time']}")
@@ -801,12 +807,12 @@ async def search_video_activities(query: str):
                 recent_activities = video_db.get_recent_activities(50)
                 activities = [a for a in recent_activities if a['activity_type'] == activity_type][:10]
                 logging.info(f"结构化查询找到 {len(activities)} 条记录")
-            
+
             # 生成统计信息
             stats = {}
             if time_info and (is_duration_query or is_stats_query):
                 stats = video_db.get_activity_statistics(time_info['date'], activity_type)
-            
+
             # 如果结构化查询结果不够，补充语义搜索
             if len(activities) < 3:
                 try:
@@ -816,7 +822,7 @@ async def search_video_activities(query: str):
                         vector_time_filter = {
                             "start_time": {"$gte": time_info['start_time'], "$lte": time_info['end_time']}
                         }
-                    
+
                     vector_results = video_vector_manager.search_activities(query, k=5, time_filter=vector_time_filter)
                     for doc, score in vector_results:
                         activity_id = doc.metadata.get('activity_id')
@@ -831,7 +837,7 @@ async def search_video_activities(query: str):
                                 activities.append(activity)
                 except Exception as e:
                     logging.warning(f"语义搜索补充失败: {e}")
-        
+
         else:
             # 纯语义搜索
             activities = []
@@ -846,7 +852,7 @@ async def search_video_activities(query: str):
                     implicit_time_filter = {
                         "start_time": {"$gte": recent_start, "$lte": recent_end}
                     }
-                
+
                 vector_results = video_vector_manager.search_activities(query, k=8, time_filter=implicit_time_filter)
                 for doc, score in vector_results:
                     activity_id = doc.metadata.get('activity_id')
@@ -864,12 +870,12 @@ async def search_video_activities(query: str):
             except Exception as e:
                 logging.error(f"语义搜索失败: {e}")
                 return None
-        
+
         # 生成回答
         if activities:
             # 构建上下文
             context_parts = []
-            
+
             # 添加统计信息
             if stats:
                 context_parts.append("=== 统计信息 ===")
@@ -878,7 +884,7 @@ async def search_video_activities(query: str):
                         f"{act_type}: {stat['event_count']}次, "
                         f"总时长{stat['total_duration']:.1f}分钟"
                     )
-            
+
             # 添加活动记录
             context_parts.append("\n=== 相关活动记录 ===")
             for i, activity in enumerate(activities[:6]):
@@ -887,19 +893,19 @@ async def search_video_activities(query: str):
                     f"{i+1}. [{activity['start_time']}] {activity['activity_type']}: "
                     f"{activity['content']} (持续{duration:.1f}分钟)"
                 )
-            
+
             context = "\n".join(context_parts)
-            
+
             # 使用优化的活动检索提示词
             from prompt import prompt_activity_search
             prompt = prompt_activity_search.format(
                 context=context,
                 query=query
             )
-            
+
             # 调用LLM生成回答
             answer = await chat_completion(prompt)
-            
+
             return {
                 "status": "success",
                 "answer": answer,
@@ -909,11 +915,11 @@ async def search_video_activities(query: str):
             }
         else:
             return {
-                "status": "success", 
+                "status": "success",
                 "answer": f"抱歉，没有找到与'{query}'相关的视频活动记录。",
                 "query_type": "video_activity_search"
             }
-    
+
     except Exception as e:
         logging.error(f"视频活动搜索失败: {e}")
         return None
@@ -927,16 +933,16 @@ async def run_deep_search(request: DeepSearchRequest):
         request_data = {
             "research_task": request.research_task
         }
-        
+
         if request.max_query_per_iteration:
             request_data["max_query_per_iteration"] = request.max_query_per_iteration
-            
+
         if request.max_search_iterations:
             request_data["max_search_iterations"] = request.max_search_iterations
-            
+
         # 发送请求到MCP browser-use服务，使用异步HTTP客户端
         logging.info(f"调用deep-search执行研究任务: {request.research_task}")
-        
+
         # 创建异步HTTP客户端
         async with httpx.AsyncClient(timeout=360.0) as client:
             try:
@@ -944,17 +950,17 @@ async def run_deep_search(request: DeepSearchRequest):
                     MCPO_DEEP_SEARCH_URL,
                     json=request_data
                 )
-                
+
                 if response.status_code != 200:
                     logging.error(f"调用deep-search失败: {response.status_code}")
                     return {
                         "status": "success",
                         "answer": f"我尝试执行深度搜索任务'{request.research_task}'，但服务返回了错误。可能是网络问题或查询过于复杂。您可以尝试简化研究主题或提供更具体的问题。"
                     }
-                
+
                 # 获取结果
                 result = response.json()
-                
+
                 # 将结果通过大模型处理
                 prompt = f"以下是我对 '{request.research_task}' 进行深度搜索的结果:\n\n"
                 if isinstance(result, list) and len(result) > 0:
@@ -962,10 +968,10 @@ async def run_deep_search(request: DeepSearchRequest):
                 else:
                     prompt += f"{result}\n\n"
                 prompt += "请以友好且专业的方式总结这些研究结果，保留重要信息，并向用户展示最关键的发现和见解。"
-                
+
                 # 调用大模型生成回答
                 search_response = await LLMService.get_response(prompt)
-                
+
                 return {
                     "status": "success",
                     "answer": search_response,
@@ -985,4 +991,4 @@ async def run_deep_search(request: DeepSearchRequest):
         }
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8085) 
+    uvicorn.run(app, host="0.0.0.0", port=8085)

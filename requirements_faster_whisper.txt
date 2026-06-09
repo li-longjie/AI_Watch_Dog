@@ -1,0 +1,35 @@
+# Faster-Whisper音频转录服务依赖
+
+# 核心依赖
+faster-whisper>=0.10.0
+pyaudio>=0.2.11
+
+# GPU支持 (可选，如果有NVIDIA GPU)
+torch>=1.9.0
+ctranslate2>=3.20.0
+
+# 音频处理
+numpy>=1.21.0
+wave
+
+# 数据库
+sqlite3
+
+# 文本处理 (可选)
+opencc-python-reimplemented>=0.1.6
+
+# 系统依赖
+tempfile
+threading
+logging
+datetime
+collections
+signal
+sys
+os
+json
+asyncio
+time
+
+# 如果需要与原版whisper兼容
+# openai-whisper>=20230314

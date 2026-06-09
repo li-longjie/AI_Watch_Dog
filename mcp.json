@@ -23,17 +23,7 @@
         "C:\\Users\\Jason\\PycharmProjects\\mcp-browser-use",
         "run",
         "src\\mcp_server_browser_use\\server.py"
-      ],
-      "env":{
-        "MCP_API_KEY":"sk-5de1d410783e4cf4a80fabca647a2477",
-        "MCP_MODEL_PROVIDER":"deepseek",
-        "MCP_MODEL_NAME":"deepseek-chat",
-        "MCP_HEADLESS":"false",
-        "BROWSER_USE_LOGGING_LEVEL":"INFO",
-        "PYTHONIOENCODING":"utf-8",
-        "PYTHONUNBUFFERED":"1",
-        "PYTHONUTF8":"1"
-      }
+      ]
     },
     "sequential-thinking": {
       "command": "npx",
@@ -51,10 +41,7 @@
       "args": [
         "-y",
         "@baidumap/mcp-server-baidu-map"
-      ],
-      "env": {
-        "BAIDU_MAP_API_KEY": "6OL4XE1fN9kB0637kEDgpM0tqJrIEowD"
-      }
+      ]
     }
   }
 }

@@ -2,8 +2,15 @@ from fastapi import FastAPI, WebSocket
 from typing import List, Optional, Dict, Any
 import uvicorn
 from pydantic import BaseModel
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+try:
+    from langchain_chroma import Chroma
+except ImportError:
+    from langchain_community.vectorstores import Chroma
+
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except ImportError:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
 import jieba
 import httpx
@@ -50,7 +57,6 @@ vector_store = Chroma(embedding_function=embeddings, persist_directory="./video_
 intelligent_agent = IntelligentAgent()
 
 # 初始化视频活动向量管理器
-from langchain_community.vectorstores import Chroma
 class VideoVectorManager:
     def __init__(self):
         self.vector_store = Chroma(
@@ -58,7 +64,7 @@ class VideoVectorManager:
             embedding_function=embeddings,
             persist_directory="./video_chroma_db"
         )
-    
+
     async def add_activity(self, activity_id, activity_data):
         """添加活动到向量数据库"""
         try:
@@ -66,9 +72,9 @@ class VideoVectorManager:
             content = activity_data.get('content', '')
             activity_type = activity_data.get('activity_type', '')
             start_time = activity_data.get('start_time', '')
-            
+
             document_text = f"活动类型: {activity_type} 活动描述: {content} 时间: {start_time}"
-            
+
             # 构建元数据
             metadata = {
                 "activity_id": activity_id,
@@ -76,7 +82,7 @@ class VideoVectorManager:
                 "start_time": start_time,
                 "source_type": activity_data.get('source_type', 'video_analysis')
             }
-            
+
             # 添加到向量数据库
             self.vector_store.add_texts(
                 texts=[document_text],
@@ -87,20 +93,20 @@ class VideoVectorManager:
         except Exception as e:
             logging.error(f"添加活动到向量数据库失败: {e}")
             return False
-    
+
     def search_activities(self, query, k=10, time_filter=None):
         """搜索活动"""
         try:
             # 先进行无过滤的搜索，然后在Python端进行时间过滤
             docs_with_scores = self.vector_store.similarity_search_with_score(query, k=k*2)
-            
+
             # 如果有时间过滤条件，在Python端进行过滤
             if time_filter and "start_time" in time_filter:
                 filtered_results = []
                 start_time_filter = time_filter["start_time"]
                 min_time = start_time_filter.get("$gte")
                 max_time = start_time_filter.get("$lte")
-                
+
                 for doc, score in docs_with_scores:
                     # 从元数据中获取活动的开始时间
                     activity_id = doc.metadata.get('activity_id')
@@ -118,9 +124,9 @@ class VideoVectorManager:
                         except Exception as e:
                             logging.warning(f"时间过滤时查询活动失败: {e}")
                             continue
-                
+
                 return filtered_results[:k]
-            
+
             return docs_with_scores[:k]
         except Exception as e:
             logging.error(f"向量搜索失败: {e}")
@@ -149,6 +155,11 @@ class SearchRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     query: str
+    mode: Optional[str] = "rag"  # 'rag'(AI问答-视频监控) 或 'activity'(活动检索-桌面行为)
+
+class ActivityInput(BaseModel):
+    activity_id: int
+    activity_data: dict
 
 class ListDocsRequest(BaseModel):
     table_name: Optional[str] = None
@@ -157,10 +168,35 @@ class ListDocsRequest(BaseModel):
 
 # 监控关键词集合
 MONITORING_KEYWORDS = {
-    "监控", "摄像头", "发现", "检测到", "看到", "观察到", "显示", "记录", 
+    "监控", "摄像头", "发现", "检测到", "看到", "观察到", "显示", "记录",
     "camera", "detected", "视频", "画面", "拍到", "出现", "动作", "行为",
     "活动", "状态", "情况", "什么时候"
 }
+
+@app.post("/add_activity/")
+async def add_activity(request: ActivityInput):
+    """添加活动到向量数据库"""
+    try:
+        success = await video_vector_manager.add_activity(
+            request.activity_id,
+            request.activity_data
+        )
+        if success:
+            return {
+                "status": "success",
+                "message": f"Activity {request.activity_id} added successfully"
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "Failed to add activity to vector database"
+            }
+    except Exception as e:
+        logging.error(f"Error in add_activity endpoint: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 @app.post("/add_text/")
 async def add_text(request: TextInput):
@@ -168,9 +204,9 @@ async def add_text(request: TextInput):
     try:
         texts = request.docs
         metadatas = []
-        
+
         timestamps_provided = request.event_timestamps and len(request.event_timestamps) == len(texts)
-        
+
         for i, text in enumerate(texts):
             metadata = {"source": request.table_name}
             if timestamps_provided:
@@ -179,10 +215,10 @@ async def add_text(request: TextInput):
                     metadata["event_timestamp"] = dt_obj.strftime('%Y-%m-%d %H:%M:%S')
                 except ValueError:
                     logging.warning(f"Invalid timestamp format received: {request.event_timestamps[i]}. Skipping timestamp metadata.")
-                    pass 
+                    pass
             metadatas.append(metadata)
-            logging.info(f"Preparing metadata for doc '{text[:20]}...': {metadata}") 
-        
+            logging.info(f"Preparing metadata for doc '{text[:20]}...': {metadata}")
+
         if texts and metadatas:
             vector_store.add_texts(texts, metadatas=metadatas)
             return {
@@ -194,7 +230,7 @@ async def add_text(request: TextInput):
                 "status": "error",
                 "message": "No valid documents or metadata to add."
             }
-            
+
     except Exception as e:
         logging.error(f"Error in add_text: {e}")
         return {
@@ -220,7 +256,7 @@ async def search(request: SearchRequest):
 
         time_keywords = ["几点", "什么时候", "时间", "多久", "持续"]
         time_query = any(keyword in query for keyword in time_keywords)
-        
+
         docs_with_scores = vector_store.similarity_search_with_score(query, k=search_k)
         logging.info(f"Initial search found {len(docs_with_scores)} documents.")
         if docs_with_scores:
@@ -253,7 +289,7 @@ async def search(request: SearchRequest):
             }
 
         contexts = [doc.page_content for doc, score in filtered_docs]
-        
+
         if time_query:
             prompt = f"""基于以下监控记录回答关于时间的问题：
 
@@ -278,7 +314,7 @@ async def search(request: SearchRequest):
         if answer.startswith("生成回答错误:") or answer.startswith("网络请求错误:") or "API 调用失败" in answer or "API 响应格式错误" in answer:
             logging.error(f"LLMService 返回错误: {answer}")
             return {
-                "status": "error", 
+                "status": "error",
                 "message": answer
             }
 
@@ -290,7 +326,7 @@ async def search(request: SearchRequest):
                     "text": doc.page_content,
                     "score": float(score)
                 }
-                for doc, score in filtered_docs 
+                for doc, score in filtered_docs
             ]
         }
 
@@ -303,29 +339,63 @@ async def search(request: SearchRequest):
 
 @app.post("/chat/")
 async def intelligent_chat(request: ChatRequest):
-    """新的智能聊天接口 - 集成MCP工具和RAG"""
+    """新的智能聊天接口 - 集成MCP工具和RAG，支持模式切换"""
     try:
         query = request.query
-        
-        # 首先检查是否是视频活动相关问题
-        activity_keywords = ["睡觉", "玩手机", "喝水", "喝饮料", "吃东西", "专注工作", "学习", "活动", "行为", "多长时间", "持续", "时长"]
-        if any(keyword in query for keyword in activity_keywords):
-            try:
-                result = await search_video_activities(query)
-                if result:
-                    return result
-            except Exception as e:
-                logging.error(f"视频活动检索失败: {e}")
-        
-        # 检查是否是监控相关问题
-        if any(keyword in query for keyword in MONITORING_KEYWORDS):
-            search_result = await search(SearchRequest(query=query, k=3))
-            if search_result.get("status") == "success":
-                return search_result
-        
-        # 使用智能代理处理其他请求
-        result = await intelligent_agent.process_user_request(query)
-        
+        mode = getattr(request, 'mode', 'rag')  # 默认为rag模式
+
+        logging.info(f"处理聊天请求: '{query}', 模式: {mode}")
+
+        # 根据模式选择数据源
+        if mode == "rag":
+            # AI问答模式 - 优先检查视频监控活动
+            video_activity_keywords = ["睡觉", "玩手机", "喝水", "喝饮料", "吃东西", "专注工作", "学习", "看手机", "休息", "睡眠", "饮水", "用餐", "工作", "吃了什么", "喝了什么", "刚刚吃", "刚才吃", "今天吃", "刚刚喝", "刚才喝", "今天喝"]
+            if any(keyword in query for keyword in video_activity_keywords):
+                try:
+                    result = await search_video_activities(query)
+                    if result:
+                        logging.info(f"视频活动检索成功: {mode}")
+                        return result
+                except Exception as e:
+                    logging.error(f"视频活动检索失败: {e}")
+
+            # 检查是否是监控相关问题
+            if any(keyword in query for keyword in MONITORING_KEYWORDS):
+                search_result = await search(SearchRequest(query=query, k=3))
+                if search_result.get("status") == "success":
+                    logging.info(f"监控数据检索成功: {mode}")
+                    return search_result
+
+        elif mode == "activity":
+            # 活动检索模式 - 直接转发到桌面活动服务
+            desktop_activity_keywords = ["访问", "浏览", "网站", "网页", "应用", "软件", "程序", "窗口", "点击", "操作", "使用", "运行", "执行", "打开", "关闭", "url", "链接", "页面", "视频", "看了", "观看"]
+            if any(keyword in query for keyword in desktop_activity_keywords):
+                try:
+                    # 调用桌面活动服务
+                    import httpx
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        response = await client.post(
+                            "http://localhost:5001/api/query",
+                            json={"message": query},
+                            headers={"Content-Type": "application/json"}
+                        )
+
+                        if response.status_code == 200:
+                            data = response.json()
+                            if data.get("result"):
+                                logging.info(f"桌面活动检索成功: {mode}")
+                                return {
+                                    "status": "success",
+                                    "answer": data.get("result"),
+                                    "query_type": "desktop_activity",
+                                    "mode": mode
+                                }
+                except Exception as e:
+                    logging.error(f"桌面活动检索失败: {e}")
+
+        # 使用智能代理处理其他请求，传递模式信息
+        result = await intelligent_agent.process_user_request(query, mode)
+
         # 如果智能代理返回的结果包含DuckDuckGo搜索结果，确保格式正确
         if isinstance(result, dict) and result.get("status") == "success":
             # 检查是否有answer字段，如果有就直接返回
@@ -338,9 +408,9 @@ async def intelligent_chat(request: ChatRequest):
                     "answer": result.get("message", "搜索完成"),
                     "query_type": "intelligent_search"
                 }
-        
+
         return result
-        
+
     except Exception as e:
         logging.error(f"智能聊天处理失败: {e}")
         return {
@@ -359,10 +429,10 @@ async def search_video_activities(query: str):
     try:
         import re
         from datetime import datetime, timedelta
-        
+
         time_info = None
         now = datetime.now()
-        
+
         if "昨天" in query or "昨日" in query:
             yesterday = now - timedelta(days=1)
             time_info = {
@@ -383,7 +453,7 @@ async def search_video_activities(query: str):
                 'end_time': day_before_yesterday.strftime('%Y-%m-%d 23:59:59'),
                 'date': day_before_yesterday.strftime('%Y-%m-%d')
             }
-        
+
         activity_type = None
         activity_mapping = {
             "睡觉": "睡觉", "休息": "睡觉", "睡眠": "睡觉",
@@ -391,20 +461,22 @@ async def search_video_activities(query: str):
             "喝水": "喝水", "饮水": "喝水",
             "喝饮料": "喝饮料", "饮料": "喝饮料",
             "吃东西": "吃东西", "吃饭": "吃东西", "用餐": "吃东西",
-            "工作": "专注工作学习", "学习": "专注工作学习", "专注": "专注工作学习"
+            "工作": "专注工作学习", "学习": "专注工作学习", "专注": "专注工作学习",
+            "吃了什么": "吃东西", "喝了什么": "喝水", "刚刚吃": "吃东西", "刚才吃": "吃东西",
+            "今天吃": "吃东西", "刚刚喝": "喝水", "刚才喝": "喝水", "今天喝": "喝水"
         }
-        
+
         for keyword, mapped_type in activity_mapping.items():
             if keyword in query:
                 activity_type = mapped_type
                 break
-        
+
         is_duration_query = any(pattern in query for pattern in ["多长时间", "多久", "时长", "持续"])
         is_stats_query = any(pattern in query for pattern in ["总共", "一共", "平均", "最多", "最少", "次数"])
-        
+
         if time_info or activity_type:
             activities = []
-            
+
             if time_info and activity_type:
                 activities = video_db.get_activities_by_time_range(
                     time_info['start_time'], time_info['end_time'], activity_type
@@ -416,11 +488,11 @@ async def search_video_activities(query: str):
             elif activity_type:
                 recent_activities = video_db.get_recent_activities(50)
                 activities = [a for a in recent_activities if a['activity_type'] == activity_type][:10]
-            
+
             stats = {}
             if time_info and (is_duration_query or is_stats_query):
                 stats = video_db.get_activity_statistics(time_info['date'], activity_type)
-            
+
             if len(activities) < 3:
                 try:
                     vector_time_filter = None
@@ -428,7 +500,7 @@ async def search_video_activities(query: str):
                         vector_time_filter = {
                             "start_time": {"$gte": time_info['start_time'], "$lte": time_info['end_time']}
                         }
-                    
+
                     vector_results = video_vector_manager.search_activities(query, k=5, time_filter=vector_time_filter)
                     for doc, score in vector_results:
                         activity_id = doc.metadata.get('activity_id')
@@ -453,7 +525,7 @@ async def search_video_activities(query: str):
                     implicit_time_filter = {
                         "start_time": {"$gte": recent_start, "$lte": recent_end}
                     }
-                
+
                 vector_results = video_vector_manager.search_activities(query, k=8, time_filter=implicit_time_filter)
                 for doc, score in vector_results:
                     activity_id = doc.metadata.get('activity_id')
@@ -470,10 +542,10 @@ async def search_video_activities(query: str):
             except Exception as e:
                 logging.error(f"语义搜索失败: {e}")
                 return None
-        
+
         if activities:
             context_parts = []
-            
+
             if stats:
                 context_parts.append("=== 统计信息 ===")
                 for act_type, stat in stats.items():
@@ -481,7 +553,7 @@ async def search_video_activities(query: str):
                         f"{act_type}: {stat['event_count']}次, "
                         f"总时长{stat['total_duration']:.1f}分钟"
                     )
-            
+
             context_parts.append("\n=== 相关活动记录 ===")
             for i, activity in enumerate(activities[:6]):
                 duration = activity.get('duration_minutes', 0)
@@ -489,17 +561,17 @@ async def search_video_activities(query: str):
                     f"{i+1}. [{activity['start_time']}] {activity['activity_type']}: "
                     f"{activity['content']} (持续{duration:.1f}分钟)"
                 )
-            
+
             context = "\n".join(context_parts)
-            
+
             from prompt import prompt_activity_search
             prompt = prompt_activity_search.format(
                 context=context,
                 query=query
             )
-            
+
             answer = await chat_completion(prompt)
-            
+
             return {
                 "status": "success",
                 "answer": answer,
@@ -509,11 +581,11 @@ async def search_video_activities(query: str):
             }
         else:
             return {
-                "status": "success", 
+                "status": "success",
                 "answer": f"抱歉，没有找到与'{query}'相关的视频活动记录。",
                 "query_type": "video_activity_search"
             }
-    
+
     except Exception as e:
         logging.error(f"视频活动搜索失败: {e}")
         return None
@@ -534,13 +606,13 @@ async def list_docs(request: ListDocsRequest):
         filter_dict = {}
         if request.table_name:
             filter_dict["source"] = request.table_name
-            
+
         results = vector_store.get(
             where=filter_dict if filter_dict else None,
             limit=request.limit,
             offset=request.offset
         )
-        
+
         if not results['ids']:
             return {
                 "status": "success",
@@ -548,7 +620,7 @@ async def list_docs(request: ListDocsRequest):
                 "total": 0,
                 "documents": []
             }
-            
+
         documents = []
         for i in range(len(results['ids'])):
             doc_info = {
@@ -557,13 +629,13 @@ async def list_docs(request: ListDocsRequest):
                 "metadata": results['metadatas'][i] if results['metadatas'] else {},
             }
             documents.append(doc_info)
-            
+
         return {
             "status": "success",
             "total": len(documents),
             "documents": documents
         }
-        
+
     except Exception as e:
         logging.error(f"获取文档列表错误: {e}")
         return {
@@ -583,7 +655,7 @@ async def get_capabilities():
             "features": [
                 "智能MCP工具调用",
                 "视频活动检索",
-                "监控记录检索", 
+                "监控记录检索",
                 "自然语言意图识别",
                 "实时信息获取"
             ]
@@ -605,4 +677,4 @@ async def health_check():
     }
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8085)  # 修改回8085端口以匹配前端配置 
+    uvicorn.run(app, host="0.0.0.0", port=8085)  # 修改回8085端口以匹配前端配置
