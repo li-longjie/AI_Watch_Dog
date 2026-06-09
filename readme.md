@@ -2,7 +2,13 @@
 
 面向个人活动日志的多模态 Agent 与 RAG 检索系统。系统可以采集视频画面、桌面操作、屏幕 OCR、窗口标题、浏览 URL、应用使用时长和语音输入，并通过自然语言完成历史行为检索、活动总结、工具调用和语音问答。
 
-演示视频：[Bilibili 项目演示](https://www.bilibili.com/video/BV187EE6JEy5/)
+演示视频：
+
+<p align="center">
+  <a href="https://www.bilibili.com/video/BV187EE6JEy5/">
+    <img src="docs/assets/demo-video-cover.jpg" alt="AI Watch Dog 项目演示视频" width="760">
+  </a>
+</p>
 
 GitHub 地址：[https://github.com/li-longjie/AI_Watch_Dog](https://github.com/li-longjie/AI_Watch_Dog)
 
